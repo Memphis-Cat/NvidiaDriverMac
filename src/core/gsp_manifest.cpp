@@ -8,9 +8,9 @@ namespace {
 constexpr std::uint64_t kPage=0x1000ull;
 constexpr std::uint32_t kWpr2Hi=0x001FA828u, kGspMailbox0=0x00110040u, kGspMailbox1=0x00110044u, kGspFalconOs=0x00110080u, kSec2Mailbox0=0x00840040u, kGspRiscvCpuCtl=0x00111388u;
 constexpr std::uint32_t kRiscvActiveMask=1u<<7u; constexpr std::uint64_t kStatusQueueEntryOffField=28ull; constexpr std::uint32_t kExpectedQueueEntryOff=0x1000u;
-std::optional<std::uint64_t> AlignUp(std::uint64_t v,std::uint64_t a) noexcept { if(!a)return std::nullopt; auto r=v%a;if(!r)return v;auto d=a-r;if(v>std::numeric_limits<std::uint64_t>::max()-d)return std::nullopt;return v+d; }
+std::optional<std::uint64_t> AlignUp(std::uint64_t v,std::uint64_t a) noexcept { if(!a)return std::nullopt;auto r=v%a;if(!r)return v;auto d=a-r;if(v>std::numeric_limits<std::uint64_t>::max()-d)return std::nullopt;return v+d; }
 bool PageAligned(std::uint64_t v) noexcept{return (v&(kPage-1u))==0u;}
-void AddAlloc(BootManifest& o,AllocationKind k,MemoryDomain d,std::uint64_t l,std::uint64_t a,bool dma){auto x=AlignUp(l,a);if(!x){o.valid=false;return;}o.allocations.push_back({k,d,l,*x,a,dma});}
+void AddAlloc(BootManifest& o,AllocationKind k,MemoryDomain d,std::uint64_t l,std::uint64_t a,DmaLayoutRequirement dl){auto x=AlignUp(l,a);if(!x){o.valid=false;return;}o.allocations.push_back({k,d,l,*x,a,dl!=DmaLayoutRequirement::None,dl});}
 void AppendActions(PhasePlan& p,const falcon::Plan& x){p.actions.insert(p.actions.end(),x.actions.begin(),x.actions.end());}
 falcon::Action Write32(std::uint32_t a,std::uint32_t v){return {falcon::ActionKind::Write32,a,v,0xFFFFFFFFu,0u};}
 bool AddressesOk(const ResolvedAddresses&a) noexcept{return PageAligned(a.queueBacking)&&PageAligned(a.cachedArguments)&&PageAligned(a.libosInitArguments)&&PageAligned(a.wprMetadata)&&PageAligned(a.radix3FirmwareRoot)&&PageAligned(a.firmwareSignature)&&PageAligned(a.gspBootloader)&&PageAligned(a.frtsFwsecImage)&&PageAligned(a.sec2BooterImage);}
@@ -20,7 +20,20 @@ BootManifest PlanBootManifest(const ManifestInputs& in){
   BootManifest o{};o.inputs=in;if(!in.gspFirmwareImageBytes||!in.gspSignatureBytes||!in.gspBootloaderBytes||!in.frtsFwsecImageBytes||!in.sec2BooterImageBytes)return o;
   auto q=PlanQueueMemory(in.queueBytes);auto r=PlanRadix3(in.gspFirmwareImageBytes);auto w=PlanWprLayout({in.fbSize,in.vgaWorkspaceOffset,in.vbiosReservedOffset,in.wprEndMargin,in.frtsSize,in.gspBootloaderBytes,in.gspFirmwareImageBytes,in.nonWprHeapSize,in.requestedWprHeapSize});
   if(!q||!r||!w)return o;o.queues=*q;o.radix3=*r;o.wpr=*w;o.valid=true;o.bootstrapRpcPrefillImplemented=true;
-  AddAlloc(o,AllocationKind::QueueBacking,MemoryDomain::System,q->totalBytes,kPage,true);AddAlloc(o,AllocationKind::CachedArguments,MemoryDomain::System,kGspArgumentsCachedBytes,kPage,true);AddAlloc(o,AllocationKind::LibosInitArguments,MemoryDomain::System,kLibosInitPageBytes,kPage,true);AddAlloc(o,AllocationKind::WprMetadata,MemoryDomain::System,kWprMetaBytes,kPage,true);AddAlloc(o,AllocationKind::Radix3Firmware,MemoryDomain::System,r->allocationBytes,kPage,true);AddAlloc(o,AllocationKind::FirmwareSignature,MemoryDomain::System,in.gspSignatureBytes,kPage,true);AddAlloc(o,AllocationKind::GspBootloader,MemoryDomain::System,in.gspBootloaderBytes,kPage,true);AddAlloc(o,AllocationKind::FrtsFwsecImage,MemoryDomain::Framebuffer,in.frtsFwsecImageBytes,kPage,false);AddAlloc(o,AllocationKind::Sec2BooterImage,MemoryDomain::Framebuffer,in.sec2BooterImageBytes,kPage,false);return o;
+
+  // Queue backing and the GSP firmware have explicit page indirection and may
+  // be genuinely scattered. Every other system-memory handoff exposes only a
+  // base address plus size and therefore must resolve to one GPU-linear range.
+  AddAlloc(o,AllocationKind::QueueBacking,MemoryDomain::System,q->totalBytes,kPage,DmaLayoutRequirement::PageList);
+  AddAlloc(o,AllocationKind::CachedArguments,MemoryDomain::System,kGspArgumentsCachedBytes,kPage,DmaLayoutRequirement::Linear);
+  AddAlloc(o,AllocationKind::LibosInitArguments,MemoryDomain::System,kLibosInitPageBytes,kPage,DmaLayoutRequirement::Linear);
+  AddAlloc(o,AllocationKind::WprMetadata,MemoryDomain::System,kWprMetaBytes,kPage,DmaLayoutRequirement::Linear);
+  AddAlloc(o,AllocationKind::Radix3Firmware,MemoryDomain::System,r->allocationBytes,kPage,DmaLayoutRequirement::PageList);
+  AddAlloc(o,AllocationKind::FirmwareSignature,MemoryDomain::System,in.gspSignatureBytes,kPage,DmaLayoutRequirement::Linear);
+  AddAlloc(o,AllocationKind::GspBootloader,MemoryDomain::System,in.gspBootloaderBytes,kPage,DmaLayoutRequirement::Linear);
+  AddAlloc(o,AllocationKind::FrtsFwsecImage,MemoryDomain::Framebuffer,in.frtsFwsecImageBytes,kPage,DmaLayoutRequirement::None);
+  AddAlloc(o,AllocationKind::Sec2BooterImage,MemoryDomain::Framebuffer,in.sec2BooterImageBytes,kPage,DmaLayoutRequirement::None);
+  return o;
 }
 
 std::optional<ResolvedArtifacts> BuildResolvedArtifacts(const BootManifest&m,const ResolvedAddresses&a,const fw::RiscvBootloaderInfo& bl,std::span<const LibosRegion> regions,const GspSystemInfoInputs& sys,std::span<const RegistryDwordEntry> registry) noexcept{
