@@ -31,4 +31,11 @@ struct Radix3Layout {
     const Radix3Layout& layout,
     std::span<const std::uint64_t> physicalPages) noexcept;
 
+// Build the exact page-aligned host allocation: Radix3 table prefix followed
+// by the firmware image, with the final partial image page zero padded.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> BuildRadix3AllocationImage(
+    const Radix3Layout& layout,
+    std::span<const std::uint64_t> physicalPages,
+    std::span<const std::uint8_t> firmwareImage) noexcept;
+
 } // namespace rtxmac::nvidia::gsp
