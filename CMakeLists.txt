@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(NvidiaDriverMac VERSION 0.0.5 LANGUAGES CXX)
+project(NvidiaDriverMac VERSION 0.0.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,4 +49,8 @@ if(BUILD_TESTING)
   add_executable(rtxmac-dma-plan-tests tests/test_dma_plan.cpp)
   target_link_libraries(rtxmac-dma-plan-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-dma-plan COMMAND rtxmac-dma-plan-tests)
+
+  add_executable(rtxmac-write-policy-tests tests/test_write_policy.cpp)
+  target_link_libraries(rtxmac-write-policy-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-write-policy COMMAND rtxmac-write-policy-tests)
 endif()
