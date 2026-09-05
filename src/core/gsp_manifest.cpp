@@ -36,9 +36,19 @@ BootManifest PlanBootManifest(const ManifestInputs& in){
   return o;
 }
 
-std::optional<ResolvedArtifacts> BuildResolvedArtifacts(const BootManifest&m,const ResolvedAddresses&a,const fw::RiscvBootloaderInfo& bl,std::span<const LibosRegion> regions,const GspSystemInfoInputs& sys,std::span<const RegistryDwordEntry> registry) noexcept{
-  if(!m.valid||bl.status!=fw::ParseStatus::Ok||!AddressesOk(a)||bl.bin.dataSize!=m.inputs.gspBootloaderBytes)return std::nullopt;auto lib=BuildLibosInitPage(regions);if(!lib)return std::nullopt;auto queue=BuildBootstrapCommandQueue(m.queues,sys,registry);if(!queue)return std::nullopt;
-  ResolvedArtifacts o{};o.cachedArguments=BuildCachedArguments(m.queues,a.queueBacking);o.libosInitArguments=*lib;o.bootstrapCommandQueue=std::move(queue->bytes);o.wprMetadata=BuildWprMeta({m.wpr,a.radix3FirmwareRoot,a.gspBootloader,bl.descriptor.monitorCodeOffset,bl.descriptor.monitorDataOffset,bl.descriptor.manifestOffset,a.firmwareSignature,m.inputs.gspSignatureBytes,0u,0u,0u});return o;
+std::optional<ResolvedArtifacts> BuildResolvedArtifacts(const BootManifest&m,const ResolvedAddresses&a,const fw::RiscvBootloaderInfo& bl,std::span<const std::uint64_t> queuePages,std::span<const LibosRegion> regions,const GspSystemInfoInputs& sys,std::span<const RegistryDwordEntry> registry) noexcept{
+  if(!m.valid||bl.status!=fw::ParseStatus::Ok||!AddressesOk(a)||bl.bin.dataSize!=m.inputs.gspBootloaderBytes)return std::nullopt;
+  if(queuePages.empty()||queuePages.size()!=m.queues.pageTableEntryCount||queuePages.front()!=a.queueBacking)return std::nullopt;
+  auto lib=BuildLibosInitPage(regions);if(!lib)return std::nullopt;
+  auto shared=BuildSharedQueueAllocationImage(m.queues,queuePages,sys,registry);if(!shared)return std::nullopt;
+
+  ResolvedArtifacts o{};
+  o.cachedArguments=shared->cachedArguments;
+  o.libosInitArguments=*lib;
+  o.sharedQueueAllocation=std::move(shared->bytes);
+  o.bootstrapCommandQueue=std::move(shared->commandQueue.bytes);
+  o.wprMetadata=BuildWprMeta({m.wpr,a.radix3FirmwareRoot,a.gspBootloader,bl.descriptor.monitorCodeOffset,bl.descriptor.monitorDataOffset,bl.descriptor.manifestOffset,a.firmwareSignature,m.inputs.gspSignatureBytes,0u,0u,0u});
+  return o;
 }
 
 BootSequence PlanBootSequence(const BootManifest&m,const ResolvedAddresses&a,const vbios::DescriptorV3& f,const fw::BooterImageInfo& s,std::uint32_t chip){
