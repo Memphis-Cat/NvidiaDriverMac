@@ -1,5 +1,7 @@
 #include "RTXMacDriver.h"
 
+#include <DriverKit/IOBufferMemoryDescriptor.h>
+#include <DriverKit/IODMACommand.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOMemoryMap.h>
 #include <PCIDriverKit/PCIDriverKit.h>
@@ -34,6 +36,27 @@ struct PreparedDmaBuffer {
   uint32_t chunkCount{0};
   uint64_t length{0};
 };
+
+void ResetDmaChunk(PreparedDmaChunk* chunk) {
+  if (!chunk) return;
+  chunk->command = nullptr;
+  chunk->segmentCount = 0;
+  chunk->flags = 0;
+  chunk->offset = 0;
+  chunk->length = 0;
+  for (uint32_t i = 0; i < kMaxDmaSegments; ++i) {
+    chunk->segments[i].address = 0;
+    chunk->segments[i].length = 0;
+  }
+}
+
+void ResetPreparedDmaBuffer(PreparedDmaBuffer* prepared) {
+  if (!prepared) return;
+  prepared->memory = nullptr;
+  prepared->chunks = nullptr;
+  prepared->chunkCount = 0;
+  prepared->length = 0;
+}
 
 // Read-only diagnostic snapshot. Every offset is cross-checked against
 // NVIDIA's published Ampere/Turing-compatible register headers and the
@@ -136,7 +159,7 @@ void CompleteDmaChunk(PreparedDmaChunk* chunk) {
     chunk->command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
     chunk->command->release();
   }
-  *chunk = {};
+  ResetDmaChunk(chunk);
 }
 
 kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
@@ -147,7 +170,7 @@ kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
   }
   if (offset > (~uint64_t{0}) - length) return kIOReturnBadArgument;
 
-  *out = {};
+  ResetDmaChunk(out);
   IODMACommandSpecification spec = {};
   spec.options = 0;
   spec.maxAddressBits = kDmaAddressBits;
@@ -207,7 +230,7 @@ kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
   return kIOReturnSuccess;
 }
 
-void ReleasePreparedDmaBuffer(PreparedDmaBuffer* prepared) {
+[[maybe_unused]] void ReleasePreparedDmaBuffer(PreparedDmaBuffer* prepared) {
   if (!prepared) return;
   if (prepared->chunks) {
     for (uint32_t i = 0; i < prepared->chunkCount; ++i) {
@@ -216,13 +239,13 @@ void ReleasePreparedDmaBuffer(PreparedDmaBuffer* prepared) {
     delete[] prepared->chunks;
   }
   if (prepared->memory) prepared->memory->release();
-  *prepared = {};
+  ResetPreparedDmaBuffer(prepared);
 }
 
 [[maybe_unused]] kern_return_t AllocateAndPrepareDmaBuffer(
     IOPCIDevice* pci, uint64_t length, PreparedDmaBuffer* out) {
   if (!pci || !out || length == 0) return kIOReturnBadArgument;
-  *out = {};
+  ResetPreparedDmaBuffer(out);
 
   if (length > (~uint64_t{0}) - (kMaxDmaChunkBytes - 1ull)) {
     return kIOReturnNoResources;
