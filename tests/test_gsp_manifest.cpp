@@ -23,7 +23,8 @@ int main() {
     .frtsSize = 0x100000ull,
     .nonWprHeapSize = 0x100000ull,
     .requestedWprHeapSize = 0x8100000ull,
-    .gspFirmwareImageBytes = 0x1A34000ull,
+    // 513 image pages (last partial) exercises a multi-page level-2 Radix3 tree.
+    .gspFirmwareImageBytes = 0x200FEFull,
     .gspSignatureBytes = 0x1000ull,
     .gspBootloaderBytes = 0x18000ull,
     .frtsFwsecImageBytes = 0x20000ull,
@@ -62,6 +63,13 @@ int main() {
   for(std::uint64_t i=0;i<m.queues.pageTableEntryCount;++i)
     queuePages.push_back(a.queueBacking+i*0x2000ull); // deliberately fragmented logical pages
 
+  std::vector<std::uint64_t> radixPages;
+  radixPages.reserve(static_cast<std::size_t>(m.radix3.allocationPages));
+  for(std::uint64_t i=0;i<m.radix3.allocationPages;++i)
+    radixPages.push_back(a.radix3FirmwareRoot+i*0x3000ull); // deliberately fragmented pages
+  std::vector<std::uint8_t> firmware(static_cast<std::size_t>(in.gspFirmwareImageBytes),0u);
+  firmware.front()=0x5Au;firmware.back()=0xA5u;
+
   fw::RiscvBootloaderInfo r{};
   r.status=fw::ParseStatus::Ok;
   r.bin.dataSize=static_cast<std::uint32_t>(in.gspBootloaderBytes);
@@ -81,7 +89,7 @@ int main() {
     .pciRevisionId=0xA1,
   };
 
-  auto art=BuildResolvedArtifacts(m,a,r,queuePages,lr,si,defs);
+  auto art=BuildResolvedArtifacts(m,a,r,queuePages,radixPages,firmware,lr,si,defs);
   assert(art);
   assert(art->sharedQueueAllocation.size()==0x81000u);
   assert(art->bootstrapCommandQueue.size()==0x40000u);
@@ -89,12 +97,20 @@ int main() {
   assert(L64(art->sharedQueueAllocation,128u*8u)==queuePages[128]);
   assert(L64(art->cachedArguments,0u)==a.queueBacking);
 
-  auto wrongRoot=queuePages;
-  wrongRoot[0]+=0x1000ull;
-  assert(!BuildResolvedArtifacts(m,a,r,wrongRoot,lr,si,defs));
-  auto tooFew=queuePages;
-  tooFew.pop_back();
-  assert(!BuildResolvedArtifacts(m,a,r,tooFew,lr,si,defs));
+  assert(art->radix3FirmwareAllocation.size()==static_cast<std::size_t>(m.radix3.allocationPages*kRadixPageBytes));
+  assert(L64(art->radix3FirmwareAllocation,0u)==radixPages[1]);
+  assert(art->radix3FirmwareAllocation[static_cast<std::size_t>(m.radix3.offsets[3])]==0x5Au);
+  assert(art->radix3FirmwareAllocation[static_cast<std::size_t>(m.radix3.offsets[3]+in.gspFirmwareImageBytes-1u)]==0xA5u);
+  assert(art->radix3FirmwareAllocation.back()==0u);
+
+  auto wrongQueueRoot=queuePages;wrongQueueRoot[0]+=0x1000ull;
+  assert(!BuildResolvedArtifacts(m,a,r,wrongQueueRoot,radixPages,firmware,lr,si,defs));
+  auto wrongRadixRoot=radixPages;wrongRadixRoot[0]+=0x1000ull;
+  assert(!BuildResolvedArtifacts(m,a,r,queuePages,wrongRadixRoot,firmware,lr,si,defs));
+  auto tooFew=queuePages;tooFew.pop_back();
+  assert(!BuildResolvedArtifacts(m,a,r,tooFew,radixPages,firmware,lr,si,defs));
+  auto shortFirmware=firmware;shortFirmware.pop_back();
+  assert(!BuildResolvedArtifacts(m,a,r,queuePages,radixPages,shortFirmware,lr,si,defs));
 
   vbios::DescriptorV3 f{};
   f.pkcDataOffset=0x100;
@@ -116,7 +132,7 @@ int main() {
   assert(seq.phases[3].checks[0].addressOrOffset==0x001FA828u);
 
   auto bad=a;bad.wprMetadata++;
-  assert(!BuildResolvedArtifacts(m,bad,r,queuePages,lr,si,defs));
+  assert(!BuildResolvedArtifacts(m,bad,r,queuePages,radixPages,firmware,lr,si,defs));
   assert(!PlanBootSequence(m,bad,f,s,0x174).valid);
 
   std::cout<<"rtxmac complete GSP boot-manifest tests passed\n";
