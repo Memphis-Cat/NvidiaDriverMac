@@ -1,229 +1,42 @@
 #include "rtxmac/gsp_manifest.hpp"
 
 #include <limits>
+#include <utility>
 
 namespace rtxmac::nvidia::gsp {
 namespace {
-
-constexpr std::uint64_t kPage = 0x1000ull;
-constexpr std::uint32_t kWpr2Hi = 0x001FA828u;
-constexpr std::uint32_t kGspMailbox0 = 0x00110040u;
-constexpr std::uint32_t kGspMailbox1 = 0x00110044u;
-constexpr std::uint32_t kGspFalconOs = 0x00110080u;
-constexpr std::uint32_t kSec2Mailbox0 = 0x00840040u;
-constexpr std::uint32_t kGspRiscvCpuCtl = 0x00111388u;
-constexpr std::uint32_t kRiscvActiveMask = 1u << 7u;
-constexpr std::uint64_t kStatusQueueEntryOffField = 28ull;
-constexpr std::uint32_t kExpectedQueueEntryOff = 0x1000u;
-
-std::optional<std::uint64_t> AlignUp(std::uint64_t value, std::uint64_t alignment) noexcept {
-  if (alignment == 0u) return std::nullopt;
-  const auto rem = value % alignment;
-  if (rem == 0u) return value;
-  const auto add = alignment - rem;
-  if (value > std::numeric_limits<std::uint64_t>::max() - add) return std::nullopt;
-  return value + add;
+constexpr std::uint64_t kPage=0x1000ull;
+constexpr std::uint32_t kWpr2Hi=0x001FA828u, kGspMailbox0=0x00110040u, kGspMailbox1=0x00110044u, kGspFalconOs=0x00110080u, kSec2Mailbox0=0x00840040u, kGspRiscvCpuCtl=0x00111388u;
+constexpr std::uint32_t kRiscvActiveMask=1u<<7u; constexpr std::uint64_t kStatusQueueEntryOffField=28ull; constexpr std::uint32_t kExpectedQueueEntryOff=0x1000u;
+std::optional<std::uint64_t> AlignUp(std::uint64_t v,std::uint64_t a) noexcept { if(!a)return std::nullopt; auto r=v%a;if(!r)return v;auto d=a-r;if(v>std::numeric_limits<std::uint64_t>::max()-d)return std::nullopt;return v+d; }
+bool PageAligned(std::uint64_t v) noexcept{return (v&(kPage-1u))==0u;}
+void AddAlloc(BootManifest& o,AllocationKind k,MemoryDomain d,std::uint64_t l,std::uint64_t a,bool dma){auto x=AlignUp(l,a);if(!x){o.valid=false;return;}o.allocations.push_back({k,d,l,*x,a,dma});}
+void AppendActions(PhasePlan& p,const falcon::Plan& x){p.actions.insert(p.actions.end(),x.actions.begin(),x.actions.end());}
+falcon::Action Write32(std::uint32_t a,std::uint32_t v){return {falcon::ActionKind::Write32,a,v,0xFFFFFFFFu,0u};}
+bool AddressesOk(const ResolvedAddresses&a) noexcept{return PageAligned(a.queueBacking)&&PageAligned(a.cachedArguments)&&PageAligned(a.libosInitArguments)&&PageAligned(a.wprMetadata)&&PageAligned(a.radix3FirmwareRoot)&&PageAligned(a.firmwareSignature)&&PageAligned(a.gspBootloader)&&PageAligned(a.frtsFwsecImage)&&PageAligned(a.sec2BooterImage);}
 }
 
-bool PageAligned(std::uint64_t value) noexcept { return (value & (kPage - 1u)) == 0u; }
-
-void AddAlloc(BootManifest& out, AllocationKind kind, MemoryDomain domain,
-              std::uint64_t logical, std::uint64_t alignment, bool dma) {
-  const auto alloc = AlignUp(logical, alignment);
-  if (!alloc) { out.valid = false; return; }
-  out.allocations.push_back({kind, domain, logical, *alloc, alignment, dma});
+BootManifest PlanBootManifest(const ManifestInputs& in){
+  BootManifest o{};o.inputs=in;if(!in.gspFirmwareImageBytes||!in.gspSignatureBytes||!in.gspBootloaderBytes||!in.frtsFwsecImageBytes||!in.sec2BooterImageBytes)return o;
+  auto q=PlanQueueMemory(in.queueBytes);auto r=PlanRadix3(in.gspFirmwareImageBytes);auto w=PlanWprLayout({in.fbSize,in.vgaWorkspaceOffset,in.vbiosReservedOffset,in.wprEndMargin,in.frtsSize,in.gspBootloaderBytes,in.gspFirmwareImageBytes,in.nonWprHeapSize,in.requestedWprHeapSize});
+  if(!q||!r||!w)return o;o.queues=*q;o.radix3=*r;o.wpr=*w;o.valid=true;o.bootstrapRpcPrefillImplemented=true;
+  AddAlloc(o,AllocationKind::QueueBacking,MemoryDomain::System,q->totalBytes,kPage,true);AddAlloc(o,AllocationKind::CachedArguments,MemoryDomain::System,kGspArgumentsCachedBytes,kPage,true);AddAlloc(o,AllocationKind::LibosInitArguments,MemoryDomain::System,kLibosInitPageBytes,kPage,true);AddAlloc(o,AllocationKind::WprMetadata,MemoryDomain::System,kWprMetaBytes,kPage,true);AddAlloc(o,AllocationKind::Radix3Firmware,MemoryDomain::System,r->allocationBytes,kPage,true);AddAlloc(o,AllocationKind::FirmwareSignature,MemoryDomain::System,in.gspSignatureBytes,kPage,true);AddAlloc(o,AllocationKind::GspBootloader,MemoryDomain::System,in.gspBootloaderBytes,kPage,true);AddAlloc(o,AllocationKind::FrtsFwsecImage,MemoryDomain::Framebuffer,in.frtsFwsecImageBytes,kPage,false);AddAlloc(o,AllocationKind::Sec2BooterImage,MemoryDomain::Framebuffer,in.sec2BooterImageBytes,kPage,false);return o;
 }
 
-void AppendActions(PhasePlan& phase, const falcon::Plan& plan) {
-  phase.actions.insert(phase.actions.end(), plan.actions.begin(), plan.actions.end());
+std::optional<ResolvedArtifacts> BuildResolvedArtifacts(const BootManifest&m,const ResolvedAddresses&a,const fw::RiscvBootloaderInfo& bl,std::span<const LibosRegion> regions,const GspSystemInfoInputs& sys,std::span<const RegistryDwordEntry> registry) noexcept{
+  if(!m.valid||bl.status!=fw::ParseStatus::Ok||!AddressesOk(a)||bl.bin.dataSize!=m.inputs.gspBootloaderBytes)return std::nullopt;auto lib=BuildLibosInitPage(regions);if(!lib)return std::nullopt;auto queue=BuildBootstrapCommandQueue(m.queues,sys,registry);if(!queue)return std::nullopt;
+  ResolvedArtifacts o{};o.cachedArguments=BuildCachedArguments(m.queues,a.queueBacking);o.libosInitArguments=*lib;o.bootstrapCommandQueue=std::move(queue->bytes);o.wprMetadata=BuildWprMeta({m.wpr,a.radix3FirmwareRoot,a.gspBootloader,bl.descriptor.monitorCodeOffset,bl.descriptor.monitorDataOffset,bl.descriptor.manifestOffset,a.firmwareSignature,m.inputs.gspSignatureBytes,0u,0u,0u});return o;
 }
 
-falcon::Action Write32(std::uint32_t address, std::uint32_t value) {
-  return {falcon::ActionKind::Write32, address, value, 0xFFFFFFFFu, 0u};
-}
-
-bool ResolvedPageAddressesValid(const ResolvedAddresses& a) noexcept {
-  return PageAligned(a.queueBacking) && PageAligned(a.cachedArguments) &&
-      PageAligned(a.libosInitArguments) && PageAligned(a.wprMetadata) &&
-      PageAligned(a.radix3FirmwareRoot) && PageAligned(a.firmwareSignature) &&
-      PageAligned(a.gspBootloader) && PageAligned(a.frtsFwsecImage) &&
-      PageAligned(a.sec2BooterImage);
-}
-
-} // namespace
-
-BootManifest PlanBootManifest(const ManifestInputs& in) {
-  BootManifest out{};
-  out.inputs = in;
-  if (in.gspFirmwareImageBytes == 0u || in.gspSignatureBytes == 0u ||
-      in.gspBootloaderBytes == 0u || in.frtsFwsecImageBytes == 0u ||
-      in.sec2BooterImageBytes == 0u) return out;
-
-  const auto q = PlanQueueMemory(in.queueBytes);
-  const auto r = PlanRadix3(in.gspFirmwareImageBytes);
-  const auto w = PlanWprLayout({
-    .fbSize = in.fbSize,
-    .vgaWorkspaceOffset = in.vgaWorkspaceOffset,
-    .vbiosReservedOffset = in.vbiosReservedOffset,
-    .wprEndMargin = in.wprEndMargin,
-    .frtsSize = in.frtsSize,
-    .bootloaderSize = in.gspBootloaderBytes,
-    .radix3ElfSize = in.gspFirmwareImageBytes,
-    .nonWprHeapSize = in.nonWprHeapSize,
-    .requestedWprHeapSize = in.requestedWprHeapSize,
-  });
-  if (!q || !r || !w) return out;
-  out.queues = *q;
-  out.radix3 = *r;
-  out.wpr = *w;
-  out.valid = true;
-
-  AddAlloc(out, AllocationKind::QueueBacking, MemoryDomain::System, q->totalBytes, kPage, true);
-  AddAlloc(out, AllocationKind::CachedArguments, MemoryDomain::System, kGspArgumentsCachedBytes, kPage, true);
-  AddAlloc(out, AllocationKind::LibosInitArguments, MemoryDomain::System, kLibosInitPageBytes, kPage, true);
-  AddAlloc(out, AllocationKind::WprMetadata, MemoryDomain::System, kWprMetaBytes, kPage, true);
-  AddAlloc(out, AllocationKind::Radix3Firmware, MemoryDomain::System, r->allocationBytes, kPage, true);
-  AddAlloc(out, AllocationKind::FirmwareSignature, MemoryDomain::System, in.gspSignatureBytes, kPage, true);
-  AddAlloc(out, AllocationKind::GspBootloader, MemoryDomain::System, in.gspBootloaderBytes, kPage, true);
-  AddAlloc(out, AllocationKind::FrtsFwsecImage, MemoryDomain::Framebuffer, in.frtsFwsecImageBytes, kPage, false);
-  AddAlloc(out, AllocationKind::Sec2BooterImage, MemoryDomain::Framebuffer, in.sec2BooterImageBytes, kPage, false);
-  return out;
-}
-
-std::optional<ResolvedArtifacts> BuildResolvedArtifacts(
-    const BootManifest& manifest,
-    const ResolvedAddresses& addresses,
-    const fw::RiscvBootloaderInfo& bootloader,
-    std::span<const LibosRegion> libosRegions) noexcept {
-  if (!manifest.valid || bootloader.status != fw::ParseStatus::Ok || !ResolvedPageAddressesValid(addresses)) return std::nullopt;
-  if (bootloader.bin.dataSize != manifest.inputs.gspBootloaderBytes) return std::nullopt;
-
-  const auto libos = BuildLibosInitPage(libosRegions);
-  if (!libos) return std::nullopt;
-
-  ResolvedArtifacts out{};
-  out.cachedArguments = BuildCachedArguments(manifest.queues, addresses.queueBacking);
-  out.libosInitArguments = *libos;
-  out.wprMetadata = BuildWprMeta({
-    .layout = manifest.wpr,
-    .sysmemAddrOfRadix3Elf = addresses.radix3FirmwareRoot,
-    .sysmemAddrOfBootloader = addresses.gspBootloader,
-    .bootloaderCodeOffset = bootloader.descriptor.monitorCodeOffset,
-    .bootloaderDataOffset = bootloader.descriptor.monitorDataOffset,
-    .bootloaderManifestOffset = bootloader.descriptor.manifestOffset,
-    .sysmemAddrOfSignature = addresses.firmwareSignature,
-    .sizeOfSignature = manifest.inputs.gspSignatureBytes,
-    .gspFwHeapVfPartitionCount = 0u,
-    .flags = 0u,
-    .pmuReservedSize = 0u,
-  });
-  return out;
-}
-
-BootSequence PlanBootSequence(
-    const BootManifest& manifest,
-    const ResolvedAddresses& addresses,
-    const vbios::DescriptorV3& fwsec,
-    const fw::BooterImageInfo& sec2Booter,
-    std::uint32_t chipId) {
-  BootSequence out{};
-  if (!manifest.valid || sec2Booter.status != fw::ParseStatus::Ok || !ResolvedPageAddressesValid(addresses)) return out;
-  if (sec2Booter.bin.dataSize != manifest.inputs.sec2BooterImageBytes) return out;
-  if (fwsec.imemLoadSize == 0u || fwsec.dmemLoadSize == 0u) return out;
-
-  // This is deliberately surfaced first: queue payload construction still has
-  // two host-side bootstrap RPC records to implement.
-  PhasePlan prefill{BootPhase::PrefillBootstrapRpcRecords};
-  if (!manifest.bootstrapRpcPrefillImplemented)
-    prefill.checks.push_back({CheckKind::HostPreparationRequired, 0u, 0u, 0u});
-  out.phases.push_back(std::move(prefill));
-
-  const auto gspReset = falcon::PlanReset(falcon::Engine::Gsp, false, chipId);
-  PhasePlan resetFrts{BootPhase::ResetGspForFrts};
-  AppendActions(resetFrts, gspReset);
-  out.phases.push_back(std::move(resetFrts));
-
-  const auto frtsExec = falcon::PlanAuthenticatedExecution({
-    .engine = falcon::Engine::Gsp,
-    .imagePhysicalAddress = addresses.frtsFwsecImage,
-    .codeOffset = 0u,
-    .dataOffset = fwsec.imemLoadSize,
-    .imemPhysicalBase = fwsec.imemPhysBase,
-    .imemVirtualBase = fwsec.imemVirtBase,
-    .imemBytes = fwsec.imemLoadSize,
-    .dmemPhysicalBase = fwsec.dmemPhysBase,
-    .dmemVirtualBase = 0u,
-    .dmemBytes = fwsec.dmemLoadSize,
-    .pkcOffset = fwsec.pkcDataOffset,
-    .engineIdMask = fwsec.engineIdMask,
-    .ucodeId = fwsec.ucodeId,
-    .mailbox = std::nullopt,
-  });
-  if (!frtsExec.valid) return {};
-  PhasePlan execFrts{BootPhase::ExecuteFrtsFwsec};
-  AppendActions(execFrts, frtsExec);
-  out.phases.push_back(std::move(execFrts));
-
-  PhasePlan verifyWpr{BootPhase::VerifyWpr2};
-  verifyWpr.checks.push_back({CheckKind::MmioNonZero, kWpr2Hi, 0xFFFFFFFFu, 0u});
-  out.phases.push_back(std::move(verifyWpr));
-
-  const auto gspRiscvReset = falcon::PlanReset(falcon::Engine::Gsp, true, chipId);
-  PhasePlan resetRiscv{BootPhase::ResetGspForRiscv};
-  AppendActions(resetRiscv, gspRiscvReset);
-  out.phases.push_back(std::move(resetRiscv));
-
-  PhasePlan mailbox{BootPhase::ProgramLibosMailbox};
-  mailbox.actions.push_back(Write32(kGspMailbox0, static_cast<std::uint32_t>(addresses.libosInitArguments)));
-  mailbox.actions.push_back(Write32(kGspMailbox1, static_cast<std::uint32_t>(addresses.libosInitArguments >> 32u)));
-  out.phases.push_back(std::move(mailbox));
-
-  const auto sec2Reset = falcon::PlanReset(falcon::Engine::Sec2, false, chipId);
-  PhasePlan resetSec2{BootPhase::ResetSec2};
-  AppendActions(resetSec2, sec2Reset);
-  out.phases.push_back(std::move(resetSec2));
-
-  const auto sec2Exec = falcon::PlanAuthenticatedExecution({
-    .engine = falcon::Engine::Sec2,
-    .imagePhysicalAddress = addresses.sec2BooterImage,
-    .codeOffset = sec2Booter.firstApp.offset,
-    .dataOffset = sec2Booter.load.osDataOffset,
-    .imemPhysicalBase = 0u,
-    .imemVirtualBase = sec2Booter.firstApp.offset,
-    .imemBytes = sec2Booter.firstApp.size,
-    .dmemPhysicalBase = 0u,
-    .dmemVirtualBase = 0u,
-    .dmemBytes = sec2Booter.load.osDataSize,
-    .pkcOffset = 0x10u,
-    .engineIdMask = 1u,
-    .ucodeId = 3u,
-    .mailbox = addresses.wprMetadata,
-  });
-  if (!sec2Exec.valid) return {};
-  PhasePlan execSec2{BootPhase::ExecuteSec2Booter};
-  AppendActions(execSec2, sec2Exec);
-  out.phases.push_back(std::move(execSec2));
-
-  PhasePlan verifySec2{BootPhase::VerifySec2Booter};
-  verifySec2.checks.push_back({CheckKind::MmioMaskEqual, kSec2Mailbox0, 0xFFFFFFFFu, 0u});
-  out.phases.push_back(std::move(verifySec2));
-
-  PhasePlan release{BootPhase::ReleaseGspRiscv};
-  release.actions.push_back(Write32(kGspFalconOs, 0u));
-  out.phases.push_back(std::move(release));
-
-  PhasePlan verifyGsp{BootPhase::VerifyGspRiscv};
-  verifyGsp.checks.push_back({CheckKind::MmioMaskEqual, kGspRiscvCpuCtl, kRiscvActiveMask, kRiscvActiveMask});
-  out.phases.push_back(std::move(verifyGsp));
-
-  PhasePlan statusQ{BootPhase::WaitStatusQueue};
-  statusQ.checks.push_back({CheckKind::SharedMemoryU32Equal,
-      manifest.queues.statusQueueOffset + kStatusQueueEntryOffField, 0xFFFFFFFFu, kExpectedQueueEntryOff});
-  out.phases.push_back(std::move(statusQ));
-
-  out.valid = true;
-  out.executableWithCurrentCore = manifest.bootstrapRpcPrefillImplemented;
-  return out;
+BootSequence PlanBootSequence(const BootManifest&m,const ResolvedAddresses&a,const vbios::DescriptorV3& f,const fw::BooterImageInfo& s,std::uint32_t chip){
+  BootSequence o{};if(!m.valid||s.status!=fw::ParseStatus::Ok||!AddressesOk(a)||s.bin.dataSize!=m.inputs.sec2BooterImageBytes||!f.imemLoadSize||!f.dmemLoadSize)return o;
+  o.phases.push_back({BootPhase::PrefillBootstrapRpcRecords,{},{}});
+  PhasePlan p{BootPhase::ResetGspForFrts};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,false,chip));o.phases.push_back(std::move(p));
+  auto fx=falcon::PlanAuthenticatedExecution({falcon::Engine::Gsp,a.frtsFwsecImage,0u,f.imemLoadSize,f.imemPhysBase,f.imemVirtBase,f.imemLoadSize,f.dmemPhysBase,0u,f.dmemLoadSize,f.pkcDataOffset,f.engineIdMask,f.ucodeId,std::nullopt});if(!fx.valid)return {};p={BootPhase::ExecuteFrtsFwsec};AppendActions(p,fx);o.phases.push_back(std::move(p));
+  o.phases.push_back({BootPhase::VerifyWpr2,{},{{CheckKind::MmioNonZero,kWpr2Hi,0xFFFFFFFFu,0u}}});p={BootPhase::ResetGspForRiscv};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,true,chip));o.phases.push_back(std::move(p));
+  o.phases.push_back({BootPhase::ProgramLibosMailbox,{Write32(kGspMailbox0,static_cast<std::uint32_t>(a.libosInitArguments)),Write32(kGspMailbox1,static_cast<std::uint32_t>(a.libosInitArguments>>32u))},{}});p={BootPhase::ResetSec2};AppendActions(p,falcon::PlanReset(falcon::Engine::Sec2,false,chip));o.phases.push_back(std::move(p));
+  auto sx=falcon::PlanAuthenticatedExecution({falcon::Engine::Sec2,a.sec2BooterImage,s.firstApp.offset,s.load.osDataOffset,0u,s.firstApp.offset,s.firstApp.size,0u,0u,s.load.osDataSize,0x10u,1u,3u,a.wprMetadata});if(!sx.valid)return {};p={BootPhase::ExecuteSec2Booter};AppendActions(p,sx);o.phases.push_back(std::move(p));
+  o.phases.push_back({BootPhase::VerifySec2Booter,{},{{CheckKind::MmioMaskEqual,kSec2Mailbox0,0xFFFFFFFFu,0u}}});o.phases.push_back({BootPhase::ReleaseGspRiscv,{Write32(kGspFalconOs,0u)},{}});o.phases.push_back({BootPhase::VerifyGspRiscv,{},{{CheckKind::MmioMaskEqual,kGspRiscvCpuCtl,kRiscvActiveMask,kRiscvActiveMask}}});o.phases.push_back({BootPhase::WaitStatusQueue,{},{{CheckKind::SharedMemoryU32Equal,m.queues.statusQueueOffset+kStatusQueueEntryOffField,0xFFFFFFFFu,kExpectedQueueEntryOff}}});o.valid=true;o.executableWithCurrentCore=m.bootstrapRpcPrefillImplemented;return o;
 }
 
 } // namespace rtxmac::nvidia::gsp

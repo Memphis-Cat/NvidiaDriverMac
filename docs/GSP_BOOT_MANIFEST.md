@@ -1,40 +1,19 @@
 # Offline GSP boot manifest
 
-`gsp_manifest.*` is the bridge between the portable parsers/planners and a future DriverKit DMA/MMIO backend. It still performs **zero hardware operations**.
+`gsp_manifest.*` bridges the portable parsers/planners and a future DriverKit DMA/MMIO backend. It performs **zero hardware operations**.
 
-## Phase A: memory requirements
+The manifest defines nine core allocations: queue backing, cached GSP args, libOS init page, WPR metadata, Radix3 firmware, firmware signature, GSP bootloader, patched FRTS FWSEC image, and patched SEC2 booter image. Each records logical/rounded size, alignment, memory domain and DMA-mapping requirement.
 
-The manifest currently requires nine core allocations:
-
-1. GSP command/status queue backing (system memory)
-2. cached GSP arguments page (system memory)
-3. libOS init-argument page (system memory)
-4. WPR metadata page (system memory)
-5. Radix3 GSP firmware tree/image (system memory)
-6. GSP firmware signature (system memory)
-7. GSP RISC-V bootloader (system memory)
-8. patched FRTS FWSEC image (framebuffer)
-9. patched SEC2 booter image (framebuffer)
-
-Each item has a logical size, rounded allocation size, required alignment, memory domain and whether a DriverKit DMA mapping is required.
-
-Firmware-specific libOS log/task backing regions remain caller-provided rather than being frozen into driver policy.
-
-## Phase B: resolved artifacts
-
-Once physical addresses exist, the core can build:
+Once physical addresses are resolved, the core now builds all host-side initial artifacts:
 
 - `GSP_ARGUMENTS_CACHED`
 - 256-byte `GspFwWprMeta`
 - 4 KiB libOS init page
+- fully prefilled 0x40000 GSP command queue containing system-info and registry RPCs
 
-It validates that the parsed bootloader payload size matches the manifest and that all resolved core allocations are page aligned.
+The dry-run hardware sequence is:
 
-## Phase C: dry-run hardware sequence
-
-The operation list mirrors the current Ampere boot order:
-
-1. prefill bootstrap RPC records (currently marked as an unresolved host-preparation dependency)
+1. prefilled bootstrap RPC records are already present
 2. reset GSP Falcon for FWSEC
 3. execute FRTS FWSEC
 4. require WPR2 high != 0
@@ -47,13 +26,4 @@ The operation list mirrors the current Ampere boot order:
 11. require GSP RISC-V CPU active
 12. wait for the GSP status queue header
 
-The sequence combines existing deny-by-default Falcon operation plans; there is still no live executor.
-
-## Remaining explicit blocker
-
-Before this manifest can report `executableWithCurrentCore=true`, we still need byte-exact serializers for the two command-queue records prefilled before GSP launch:
-
-- GSP system information
-- registry table
-
-That is the next offline task.
+`executableWithCurrentCore` can now be true: the **offline** boot plan itself has no known host-preparation gap. This does not mean a live executor exists; DriverKit allocation/DMA/MMIO remains separately gated.
