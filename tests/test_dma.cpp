@@ -15,6 +15,13 @@ int main() {
     assert(result.status == DmaCoverageStatus::Ok);
     assert(result.coveredBytes == 0x3000);
     assert(result.segmentCount == 2);
+
+    const auto pages = ExpandDmaSegmentsToPages(segments, 0x3000);
+    assert(pages.status == DmaPageMapStatus::Ok);
+    assert(pages.pageAddresses.size() == 3u);
+    assert(pages.pageAddresses[0] == 0x100000ull);
+    assert(pages.pageAddresses[1] == 0x300000ull);
+    assert(pages.pageAddresses[2] == 0x301000ull);
   }
 
   {
@@ -23,6 +30,14 @@ int main() {
     const auto result = ValidateDmaSegments(segments, 0x81000);
     assert(result.status == DmaCoverageStatus::Truncated);
     assert(result.coveredBytes == 0x20000);
+    assert(ExpandDmaSegmentsToPages(segments, 0x81000).status == DmaPageMapStatus::CoverageError);
+  }
+
+  {
+    const std::vector<DmaSegment> segments{{0x100000, 0x2000}};
+    const auto result = ValidateDmaSegments(segments, 0x1000);
+    assert(result.status == DmaCoverageStatus::Overrun);
+    assert(ExpandDmaSegmentsToPages(segments, 0x1000).status == DmaPageMapStatus::CoverageError);
   }
 
   {
@@ -35,6 +50,22 @@ int main() {
     assert(ValidateDmaSegments(segments, 4).status == DmaCoverageStatus::AddressOverflow);
   }
 
-  std::cout << "rtxmac DMA scatter-list validation tests passed\n";
+  {
+    const std::vector<DmaSegment> segments{{0x100800, 0x1000}};
+    assert(ExpandDmaSegmentsToPages(segments, 0x1000).status == DmaPageMapStatus::SegmentAddressUnaligned);
+  }
+
+  {
+    const std::vector<DmaSegment> segments{{0x100000, 0x0800}, {0x200000, 0x0800}};
+    assert(ExpandDmaSegmentsToPages(segments, 0x1000).status == DmaPageMapStatus::SegmentLengthUnaligned);
+  }
+
+  {
+    const std::vector<DmaSegment> segments{{0x100000, 0x1000}};
+    assert(ExpandDmaSegmentsToPages(segments, 0x1000, 3000).status == DmaPageMapStatus::InvalidPageSize);
+    assert(ExpandDmaSegmentsToPages(segments, 0x0800).status == DmaPageMapStatus::RequestedSizeNotPageAligned);
+  }
+
+  std::cout << "rtxmac DMA scatter-list and page-map validation tests passed\n";
   return 0;
 }
