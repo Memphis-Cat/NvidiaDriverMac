@@ -28,7 +28,7 @@ int main() {
   assert(l->allocationPages == 517u);
 
   std::vector<std::uint64_t> pages(static_cast<std::size_t>(l->allocationPages));
-  for (std::size_t i=0;i<pages.size();++i) pages[i] = 0x10000000ull + i * 0x1000ull;
+  for (std::size_t i=0;i<pages.size();++i) pages[i] = 0x10000000ull + i * 0x2000ull;
   const auto tables = BuildRadix3Tables(*l, pages);
   assert(tables.has_value());
   // root -> level1 page 1
@@ -41,8 +41,22 @@ int main() {
   assert(Load64(*tables, 0x2FF8) == pages[515]);
   assert(Load64(*tables, 0x3000) == pages[516]);
 
+  std::vector<std::uint8_t> firmware(static_cast<std::size_t>(imageBytes));
+  for(std::size_t i=0;i<firmware.size();++i) firmware[i]=static_cast<std::uint8_t>((i*37u+11u)&0xffu);
+  const auto allocation=BuildRadix3AllocationImage(*l,pages,firmware);
+  assert(allocation.has_value());
+  assert(allocation->size()==static_cast<std::size_t>(l->allocationPages*kRadixPageBytes));
+  assert(Load64(*allocation,0x0000)==pages[1]);
+  assert((*allocation)[static_cast<std::size_t>(l->offsets[3])]==firmware[0]);
+  assert((*allocation)[static_cast<std::size_t>(l->offsets[3]+imageBytes-1u)]==firmware.back());
+  // Final partial page is zero padded rather than containing uninitialized bytes.
+  assert(allocation->back()==0u);
+
+  auto shortFirmware=firmware;shortFirmware.pop_back();
+  assert(!BuildRadix3AllocationImage(*l,pages,shortFirmware).has_value());
   pages[10] += 1;
   assert(!BuildRadix3Tables(*l, pages).has_value());
+  assert(!BuildRadix3AllocationImage(*l,pages,firmware).has_value());
   assert(!PlanRadix3(0u).has_value());
-  std::cout << "rtxmac GSP Radix3 tests passed\n";
+  std::cout << "rtxmac GSP Radix3 allocation tests passed\n";
 }
