@@ -137,4 +137,33 @@ std::optional<BootstrapQueueImage> BuildBootstrapCommandQueue(
   return out;
 }
 
+std::optional<SharedQueueAllocationImage> BuildSharedQueueAllocationImage(
+    const QueueMemoryLayout& layout,
+    std::span<const std::uint64_t> dmaPageAddresses,
+    const GspSystemInfoInputs& systemInfo,
+    std::span<const RegistryDwordEntry> registry) {
+  if (dmaPageAddresses.empty()) return std::nullopt;
+  if (layout.totalBytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return std::nullopt;
+  if (layout.commandQueueOffset > layout.totalBytes ||
+      layout.queueBytes > layout.totalBytes - layout.commandQueueOffset) return std::nullopt;
+  if (layout.statusQueueOffset > layout.totalBytes ||
+      layout.queueBytes > layout.totalBytes - layout.statusQueueOffset) return std::nullopt;
+
+  const auto pageTable = BuildQueuePageTable(layout, dmaPageAddresses);
+  const auto commandQueue = BuildBootstrapCommandQueue(layout, systemInfo, registry);
+  if (!pageTable || !commandQueue) return std::nullopt;
+  if (pageTable->size() != layout.pageTableBytes || commandQueue->bytes.size() != layout.queueBytes) return std::nullopt;
+
+  SharedQueueAllocationImage out{};
+  out.bytes.assign(static_cast<std::size_t>(layout.totalBytes), 0u);
+  std::copy(pageTable->begin(), pageTable->end(), out.bytes.begin());
+  std::copy(commandQueue->bytes.begin(), commandQueue->bytes.end(),
+            out.bytes.begin() + static_cast<std::ptrdiff_t>(layout.commandQueueOffset));
+
+  // The status queue remains all-zero because GSP-RM owns its transmit header.
+  out.cachedArguments = BuildCachedArguments(layout, dmaPageAddresses[0]);
+  out.commandQueue = *commandQueue;
+  return out;
+}
+
 } // namespace rtxmac::nvidia::gsp
