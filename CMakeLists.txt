@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(NvidiaDriverMac VERSION 0.0.15 LANGUAGES CXX)
+project(NvidiaDriverMac VERSION 0.0.16 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +17,7 @@ add_library(rtxmac_core STATIC
     src/core/gsp_boot.cpp
     src/core/gsp_metadata.cpp
     src/core/gsp_radix3.cpp
+    src/core/gsp_manifest.cpp
     src/core/elf.cpp
     src/core/nvfw.cpp
     src/core/vbios.cpp
@@ -83,6 +84,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-gsp-radix3-tests tests/test_gsp_radix3.cpp)
   target_link_libraries(rtxmac-gsp-radix3-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-gsp-radix3 COMMAND rtxmac-gsp-radix3-tests)
+
+  add_executable(rtxmac-gsp-manifest-tests tests/test_gsp_manifest.cpp)
+  target_link_libraries(rtxmac-gsp-manifest-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-gsp-boot-manifest COMMAND rtxmac-gsp-manifest-tests)
 
   add_executable(rtxmac-elf-tests tests/test_elf.cpp)
   target_link_libraries(rtxmac-elf-tests PRIVATE rtxmac_core)
