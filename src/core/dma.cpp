@@ -42,6 +42,31 @@ DmaCoverage ValidateDmaSegments(std::span<const DmaSegment> segments,
   return out;
 }
 
+DmaLinearRange ResolveLinearDmaRange(
+    std::span<const DmaSegment> segments,
+    std::uint64_t requestedBytes) noexcept {
+  DmaLinearRange out{};
+  const auto coverage = ValidateDmaSegments(segments, requestedBytes);
+  if (coverage.status != DmaCoverageStatus::Ok || coverage.coveredBytes != requestedBytes) {
+    out.status = DmaLinearRangeStatus::CoverageError;
+    return out;
+  }
+
+  for (std::size_t i = 1; i < segments.size(); ++i) {
+    const auto& previous = segments[i - 1u];
+    if (previous.address > std::numeric_limits<std::uint64_t>::max() - previous.length ||
+        segments[i].address != previous.address + previous.length) {
+      out.status = DmaLinearRangeStatus::AddressDiscontinuity;
+      return out;
+    }
+  }
+
+  out.status = DmaLinearRangeStatus::Ok;
+  out.address = segments.front().address;
+  out.length = requestedBytes;
+  return out;
+}
+
 DmaPageMap ExpandDmaSegmentsToPages(
     std::span<const DmaSegment> segments,
     std::uint64_t requestedBytes,
