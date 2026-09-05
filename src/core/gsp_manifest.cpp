@@ -8,7 +8,7 @@ namespace {
 constexpr std::uint64_t kPage=0x1000ull;
 constexpr std::uint32_t kWpr2Hi=0x001FA828u, kGspMailbox0=0x00110040u, kGspMailbox1=0x00110044u, kGspFalconOs=0x00110080u, kSec2Mailbox0=0x00840040u, kGspRiscvCpuCtl=0x00111388u;
 constexpr std::uint32_t kRiscvActiveMask=1u<<7u; constexpr std::uint64_t kStatusQueueEntryOffField=28ull; constexpr std::uint32_t kExpectedQueueEntryOff=0x1000u;
-std::optional<std::uint64_t> AlignUp(std::uint64_t v,std::uint64_t a) noexcept { if(!a)return std::nullopt;auto r=v%a;if(!r)return v;auto d=a-r;if(v>std::limits<std::uint64_t>::max()-d)return std::nullopt;return v+d; }
+std::optional<std::uint64_t> AlignUp(std::uint64_t v,std::uint64_t a) noexcept { if(!a)return std::nullopt;auto r=v%a;if(!r)return v;auto d=a-r;if(v>std::numeric_limits<std::uint64_t>::max()-d)return std::nullopt;return v+d; }
 bool PageAligned(std::uint64_t v) noexcept{return (v&(kPage-1u))==0u;}
 void AddAlloc(BootManifest& o,AllocationKind k,MemoryDomain d,std::uint64_t l,std::uint64_t a,DmaLayoutRequirement dl){auto x=AlignUp(l,a);if(!x){o.valid=false;return;}o.allocations.push_back({k,d,l,*x,a,dl!=DmaLayoutRequirement::None,dl});}
 void AppendActions(PhasePlan& p,const falcon::Plan& x){p.actions.insert(p.actions.end(),x.actions.begin(),x.actions.end());}
