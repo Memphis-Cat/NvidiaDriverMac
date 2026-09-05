@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
+#include <vector>
 
 namespace rtxmac::nvidia::gsp {
 
@@ -15,6 +17,8 @@ inline constexpr std::size_t kGspArgumentsCachedBytes = 72u;
 
 struct QueueMemoryLayout {
   std::uint64_t queueBytes{};
+  std::uint64_t pageBytes{};
+  std::uint64_t pteBytes{};
   std::uint64_t queuePageCount{};
   std::uint64_t pageTableEntryCount{};
   std::uint64_t pageTableBytes{};
@@ -27,6 +31,13 @@ struct QueueMemoryLayout {
     std::uint64_t queueBytes = kDefaultQueueBytes,
     std::uint64_t pageBytes = kGspPageBytes,
     std::uint64_t pteBytes = kGspPteBytes) noexcept;
+
+// Build the shared-memory PTE page used by the GSP message queues. The Ampere
+// path stores one raw little-endian 64-bit DMA page address per entry; entry 0
+// maps the page-table page itself, followed by the command/status queue pages.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> BuildQueuePageTable(
+    const QueueMemoryLayout& layout,
+    std::span<const std::uint64_t> dmaPageAddresses);
 
 // Build the 72-byte GSP_ARGUMENTS_CACHED block currently used by the
 // Ampere GSP path. Fields not required for initial queue bring-up remain zero.
