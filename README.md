@@ -7,7 +7,7 @@
 
 
 > [!WARNING]
-> The only NVIDIA GPU that is gonna be tested is gonna be the RTX 3060 TI.
+> The only NVIDIA GPU that is gonna be tested is gonna be the RTX 3060 TI, other NVIDIA GPUS can not work.
 
 ## Goal
 
