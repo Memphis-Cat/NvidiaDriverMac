@@ -3,6 +3,13 @@
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <vector>
+
+namespace {
+std::uint64_t L64(const auto& v, std::size_t o) {
+  std::uint64_t x=0; for(std::size_t i=0;i<8;++i)x|=static_cast<std::uint64_t>(v[o+i])<<(i*8u); return x;
+}
+}
 
 int main() {
   using namespace rtxmac::nvidia;
@@ -50,51 +57,67 @@ int main() {
     .sec2BooterImage = 0x1F0100000ull,
   };
 
-  fw::RiscvBootloaderInfo r{};
-  r.status = fw::ParseStatus::Ok;
-  r.bin.dataSize = static_cast<std::uint32_t>(in.gspBootloaderBytes);
-  r.descriptor.monitorCodeOffset = 0x1000;
-  r.descriptor.monitorDataOffset = 0x9000;
-  r.descriptor.manifestOffset = 0x200;
+  std::vector<std::uint64_t> queuePages;
+  queuePages.reserve(static_cast<std::size_t>(m.queues.pageTableEntryCount));
+  for(std::uint64_t i=0;i<m.queues.pageTableEntryCount;++i)
+    queuePages.push_back(a.queueBacking+i*0x2000ull); // deliberately fragmented logical pages
 
-  std::array<LibosRegion,1> lr{{{"RMARGS", a.cachedArguments, 0x1000}}};
-  auto defs = DefaultBootstrapRegistry();
+  fw::RiscvBootloaderInfo r{};
+  r.status=fw::ParseStatus::Ok;
+  r.bin.dataSize=static_cast<std::uint32_t>(in.gspBootloaderBytes);
+  r.descriptor.monitorCodeOffset=0x1000;
+  r.descriptor.monitorDataOffset=0x9000;
+  r.descriptor.manifestOffset=0x200;
+
+  std::array<LibosRegion,1> lr{{{"RMARGS",a.cachedArguments,0x1000}}};
+  auto defs=DefaultBootstrapRegistry();
   GspSystemInfoInputs si{
-    .bar0Physical = 0x800000000ull,
-    .bar1Physical = 0x900000000ull,
-    .bar3Physical = 0xA00000000ull,
-    .domainBusDeviceFunction = 0x100,
-    .pciDeviceIdDword = 0x248910DE,
-    .pciSubDeviceIdDword = 0x123410DE,
-    .pciRevisionId = 0xA1,
+    .bar0Physical=0x800000000ull,
+    .bar1Physical=0x900000000ull,
+    .bar3Physical=0xA00000000ull,
+    .domainBusDeviceFunction=0x100,
+    .pciDeviceIdDword=0x248910DE,
+    .pciSubDeviceIdDword=0x123410DE,
+    .pciRevisionId=0xA1,
   };
-  auto art = BuildResolvedArtifacts(m, a, r, lr, si, defs);
-  assert(art && art->bootstrapCommandQueue.size() == 0x40000u);
+
+  auto art=BuildResolvedArtifacts(m,a,r,queuePages,lr,si,defs);
+  assert(art);
+  assert(art->sharedQueueAllocation.size()==0x81000u);
+  assert(art->bootstrapCommandQueue.size()==0x40000u);
+  assert(L64(art->sharedQueueAllocation,0u)==queuePages[0]);
+  assert(L64(art->sharedQueueAllocation,128u*8u)==queuePages[128]);
+  assert(L64(art->cachedArguments,0u)==a.queueBacking);
+
+  auto wrongRoot=queuePages;
+  wrongRoot[0]+=0x1000ull;
+  assert(!BuildResolvedArtifacts(m,a,r,wrongRoot,lr,si,defs));
+  auto tooFew=queuePages;
+  tooFew.pop_back();
+  assert(!BuildResolvedArtifacts(m,a,r,tooFew,lr,si,defs));
 
   vbios::DescriptorV3 f{};
-  f.pkcDataOffset = 0x100;
-  f.imemLoadSize = 0x1000;
-  f.dmemLoadSize = 0x1000;
-  f.engineIdMask = 1;
-  f.ucodeId = 5;
-
+  f.pkcDataOffset=0x100;
+  f.imemLoadSize=0x1000;
+  f.dmemLoadSize=0x1000;
+  f.engineIdMask=1;
+  f.ucodeId=5;
   fw::BooterImageInfo s{};
-  s.status = fw::ParseStatus::Ok;
-  s.bin.dataSize = static_cast<std::uint32_t>(in.sec2BooterImageBytes);
-  s.firstApp.offset = 0x1000;
-  s.firstApp.size = 0x1000;
-  s.load.osDataOffset = 0x3000;
-  s.load.osDataSize = 0x1000;
+  s.status=fw::ParseStatus::Ok;
+  s.bin.dataSize=static_cast<std::uint32_t>(in.sec2BooterImageBytes);
+  s.firstApp.offset=0x1000;
+  s.firstApp.size=0x1000;
+  s.load.osDataOffset=0x3000;
+  s.load.osDataSize=0x1000;
 
-  auto seq = PlanBootSequence(m, a, f, s, 0x174);
-  assert(seq.valid && seq.executableWithCurrentCore && seq.phases.size() == 12u);
+  auto seq=PlanBootSequence(m,a,f,s,0x174);
+  assert(seq.valid&&seq.executableWithCurrentCore&&seq.phases.size()==12u);
   assert(seq.phases[0].checks.empty());
-  assert(seq.phases[3].checks[0].addressOrOffset == 0x001FA828u);
+  assert(seq.phases[3].checks[0].addressOrOffset==0x001FA828u);
 
-  auto bad = a;
-  bad.wprMetadata++;
-  assert(!BuildResolvedArtifacts(m, bad, r, lr, si, defs));
-  assert(!PlanBootSequence(m, bad, f, s, 0x174).valid);
+  auto bad=a;bad.wprMetadata++;
+  assert(!BuildResolvedArtifacts(m,bad,r,queuePages,lr,si,defs));
+  assert(!PlanBootSequence(m,bad,f,s,0x174).valid);
 
-  std::cout << "rtxmac complete GSP boot-manifest tests passed\n";
+  std::cout<<"rtxmac complete GSP boot-manifest tests passed\n";
 }
