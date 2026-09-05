@@ -1,5 +1,6 @@
 #include "rtxmac/gsp_radix3.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
 
@@ -80,6 +81,26 @@ std::optional<std::vector<std::uint8_t>> BuildRadix3Tables(
     }
     parentStartPage = childStartPage;
   }
+  return out;
+}
+
+std::optional<std::vector<std::uint8_t>> BuildRadix3AllocationImage(
+    const Radix3Layout& layout,
+    std::span<const std::uint64_t> physicalPages,
+    std::span<const std::uint8_t> firmwareImage) noexcept {
+  if (firmwareImage.size() != layout.imageBytes) return std::nullopt;
+  if (layout.allocationPages > std::numeric_limits<std::uint64_t>::max() / kRadixPageBytes) return std::nullopt;
+  const std::uint64_t paddedBytes = layout.allocationPages * kRadixPageBytes;
+  if (paddedBytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return std::nullopt;
+  if (layout.offsets[3] > paddedBytes || layout.imageBytes > paddedBytes - layout.offsets[3]) return std::nullopt;
+
+  const auto tables = BuildRadix3Tables(layout, physicalPages);
+  if (!tables || tables->size() != layout.tableBytes) return std::nullopt;
+
+  std::vector<std::uint8_t> out(static_cast<std::size_t>(paddedBytes), 0u);
+  std::copy(tables->begin(), tables->end(), out.begin());
+  std::copy(firmwareImage.begin(), firmwareImage.end(),
+            out.begin() + static_cast<std::ptrdiff_t>(layout.offsets[3]));
   return out;
 }
 
