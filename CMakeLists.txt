@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(NvidiaDriverMac VERSION 0.0.8 LANGUAGES CXX)
+project(NvidiaDriverMac VERSION 0.0.9 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +14,7 @@ add_library(rtxmac_core STATIC
     src/core/dma.cpp
     src/core/dma_plan.cpp
     src/core/gsp_rpc.cpp
+    src/core/gsp_boot.cpp
 )
 target_include_directories(rtxmac_core PUBLIC include)
 
@@ -63,4 +64,8 @@ if(BUILD_TESTING)
   add_executable(rtxmac-gsp-rpc-tests tests/test_gsp_rpc.cpp)
   target_link_libraries(rtxmac-gsp-rpc-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-gsp-rpc COMMAND rtxmac-gsp-rpc-tests)
+
+  add_executable(rtxmac-gsp-boot-tests tests/test_gsp_boot.cpp)
+  target_link_libraries(rtxmac-gsp-boot-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-gsp-boot-memory COMMAND rtxmac-gsp-boot-tests)
 endif()
