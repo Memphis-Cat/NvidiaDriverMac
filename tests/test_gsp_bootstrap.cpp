@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+#include <vector>
 
 namespace {
 std::uint32_t L32(const auto& v, std::size_t o) {
@@ -61,5 +62,30 @@ int main() {
   assert(q->bytes[0x1000u] == q->records[0].bytes[0]);
   assert(q->bytes[0x2000u] == q->records[1].bytes[0]);
 
-  std::cout << "rtxmac GSP bootstrap queue tests passed\n";
+  std::vector<std::uint64_t> dmaPages;
+  dmaPages.reserve(129u);
+  for (std::uint64_t i=0; i<129u; ++i) dmaPages.push_back(0x40000000ull + i*0x3000ull);
+
+  const auto shared = BuildSharedQueueAllocationImage(*layout, dmaPages, s, defaults);
+  assert(shared.has_value());
+  assert(shared->bytes.size()==0x81000u);
+  assert(L64(shared->bytes,0u)==dmaPages[0]);
+  assert(L64(shared->bytes,128u*8u)==dmaPages[128]);
+
+  // The complete command queue is placed directly after the PTE page.
+  assert(L32(shared->bytes,0x1000u+0u)==0u);
+  assert(L32(shared->bytes,0x1000u+4u)==0x40000u);
+  assert(L32(shared->bytes,0x1000u+16u)==2u);
+  assert(shared->bytes[0x2000u] == q->bytes[0x1000u]);
+
+  // Status queue starts at 0x41000 and is deliberately zero before GSP owns it.
+  for (std::size_t i=0; i<64u; ++i) assert(shared->bytes[0x41000u+i]==0u);
+
+  assert(L64(shared->cachedArguments,0u)==dmaPages[0]);
+  assert(L32(shared->cachedArguments,8u)==129u);
+  assert(L64(shared->cachedArguments,16u)==0x1000u);
+  assert(L64(shared->cachedArguments,24u)==0x41000u);
+  assert(shared->commandQueue.finalWritePointer==2u);
+
+  std::cout << "rtxmac GSP bootstrap and shared queue image tests passed\n";
 }
