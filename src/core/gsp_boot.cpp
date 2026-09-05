@@ -55,6 +55,8 @@ std::optional<QueueMemoryLayout> PlanQueueMemory(
 
   return QueueMemoryLayout{
     .queueBytes = queueBytes,
+    .pageBytes = pageBytes,
+    .pteBytes = pteBytes,
     .queuePageCount = queuePteCount,
     .pageTableEntryCount = pteCount,
     .pageTableBytes = ptBytes,
@@ -62,6 +64,27 @@ std::optional<QueueMemoryLayout> PlanQueueMemory(
     .statusQueueOffset = ptBytes + queueBytes,
     .totalBytes = ptBytes + queuesTotal,
   };
+}
+
+std::optional<std::vector<std::uint8_t>> BuildQueuePageTable(
+    const QueueMemoryLayout& layout,
+    std::span<const std::uint64_t> dmaPageAddresses) {
+  if (layout.pageBytes == 0u || layout.pteBytes != sizeof(std::uint64_t)) return std::nullopt;
+  if (layout.pageTableEntryCount != dmaPageAddresses.size()) return std::nullopt;
+  if (layout.pageTableBytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return std::nullopt;
+  if (layout.pageTableEntryCount > std::numeric_limits<std::uint64_t>::max() / layout.pteBytes) return std::nullopt;
+
+  const std::uint64_t usedBytes = layout.pageTableEntryCount * layout.pteBytes;
+  if (usedBytes > layout.pageTableBytes) return std::nullopt;
+
+  std::vector<std::uint8_t> out(static_cast<std::size_t>(layout.pageTableBytes), 0u);
+  auto bytes = std::span<std::uint8_t>(out);
+  for (std::size_t i = 0; i < dmaPageAddresses.size(); ++i) {
+    const std::uint64_t address = dmaPageAddresses[i];
+    if ((address % layout.pageBytes) != 0u) return std::nullopt;
+    StoreLe64(bytes, i * sizeof(std::uint64_t), address);
+  }
+  return out;
 }
 
 std::array<std::uint8_t, kGspArgumentsCachedBytes> BuildCachedArguments(
