@@ -12,13 +12,17 @@ Collect exact PCI identity, board/BIOS information and NVIDIA driver metadata. R
 
 Portable C++20. No Apple, Windows, Linux or NVIDIA-driver headers. It owns stable data structures, parsers and protocol rules shared by tools and future driver-facing code.
 
+The core now includes a `ReadOnlyMmio` transport abstraction. NVIDIA identity probing is written against this interface rather than DriverKit. Unit tests run the same probe against a fake GPU and assert that prototype 1 reads **only** `NV_PMC_BOOT_0` and `NV_PMC_BOOT_42`.
+
 ### 3. macOS PCI transport (DriverKit)
 
-A PCIDriverKit system extension will own the target NVIDIA PCI function and expose a narrow UserClient ABI. The first ABI is read-only: identity, PCI config reads, BAR metadata and explicitly allow-listed MMIO reads.
+A PCIDriverKit system extension owns the target NVIDIA PCI function and provides the hardware implementation of the portable transport. Prototype 1 is deliberately read-only: identity, PCI config reads, BAR metadata, and two allow-listed MMIO identity reads.
 
 ### 4. Ampere bring-up runtime
 
 Future work. GSP firmware boot, DMA, MMU/page tables, GPU virtual address spaces, RPC queues and command submission. TinyGPU/tinygrad and NVIDIA's open GPU kernel modules are reference implementations; code reuse must retain upstream licensing and attribution.
+
+This layer must stay transport-independent so the state machine can run against fake/captured devices on Windows before it is allowed to run on the real GPU.
 
 ### 5. Graphics userspace
 
@@ -40,4 +44,4 @@ Future work and currently the largest unknown: modesetting/scanout, framebuffer 
 
 ## First macOS prototype
 
-The first prototype is deliberately boring: attach to the exact GPU, read PCI identity/configuration, enumerate BAR sizes, and read only a tiny list of known-safe identification/status registers. It must produce one self-contained diagnostic bundle for analysis back on Windows.
+The first prototype is deliberately boring: attach to the exact GPU, read PCI identity/configuration, enumerate BAR sizes, and read only `NV_PMC_BOOT_0` / `NV_PMC_BOOT_42`. It must produce one self-contained diagnostic bundle for analysis back on Windows.
