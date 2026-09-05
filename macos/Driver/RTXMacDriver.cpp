@@ -63,7 +63,9 @@ kern_return_t ReadBar0Register(IOMemoryDescriptor* bar0, uint64_t bar0Size,
   if (inPage + sizeof(uint32_t) > mapLength) return kIOReturnNoResources;
 
   IOMemoryMap* map = nullptr;
-  kern_return_t kr = bar0->CreateMapping(0, 0, 0, pageBase, mapLength, &map);
+  // DriverKit CreateMapping is (options, address, offset, length, alignment, map).
+  // Map only the BAR page that contains the requested register.
+  kern_return_t kr = bar0->CreateMapping(0, 0, pageBase, mapLength, 0, &map);
   if (kr != kIOReturnSuccess || !map) {
     return kr == kIOReturnSuccess ? kIOReturnError : kr;
   }
