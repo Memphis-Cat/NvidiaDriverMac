@@ -13,8 +13,8 @@ constexpr uint64_t kPmcBoot0Offset = 0x00000000ull;
 constexpr uint64_t kPmcBoot42Offset = 0x00000A00ull;
 constexpr uint64_t kIdentityMapLength = 0x1000ull;
 
-kern_return_t ReadIdentityRegisters(IOPCIDevice* pci, uint32_t* boot0, uint32_t* boot42) {
-  if (!pci || !boot0 || !boot42) return kIOReturnBadArgument;
+kern_return_t ReadIdentityRegisters(IOService* owner, IOPCIDevice* pci, uint32_t* boot0, uint32_t* boot42) {
+  if (!owner || !pci || !boot0 || !boot42) return kIOReturnBadArgument;
 
   uint8_t memoryIndex = 0, memoryType = 0;
   uint64_t memorySize = 0;
@@ -23,7 +23,7 @@ kern_return_t ReadIdentityRegisters(IOPCIDevice* pci, uint32_t* boot0, uint32_t*
   if (memorySize < kIdentityMapLength) return kIOReturnNoResources;
 
   IOMemoryDescriptor* bar0 = nullptr;
-  kr = pci->_CopyDeviceMemoryWithIndex(memoryIndex, &bar0, nullptr);
+  kr = pci->_CopyDeviceMemoryWithIndex(memoryIndex, &bar0, owner);
   if (kr != kIOReturnSuccess || !bar0) return kr == kIOReturnSuccess ? kIOReturnError : kr;
 
   IOMemoryMap* map = nullptr;
@@ -93,7 +93,7 @@ kern_return_t RTXMacDriver::Start_Impl(IOService* provider) {
   }
 
   uint32_t boot0 = 0, boot42 = 0;
-  const kern_return_t idKr = ReadIdentityRegisters(ivars->pci, &boot0, &boot42);
+  const kern_return_t idKr = ReadIdentityRegisters(this, ivars->pci, &boot0, &boot42);
   if (idKr == kIOReturnSuccess) {
     const uint32_t architecture = (boot42 >> 24u) & 0x1Fu;
     const uint32_t implementation = (boot42 >> 20u) & 0x0Fu;

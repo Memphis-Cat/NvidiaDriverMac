@@ -8,12 +8,15 @@ The roadmap is organized around **hardware-test gates**. We keep working offline
 - [x] Portable C++ core
 - [x] Windows PCI hardware-ID parser
 - [x] Windows hardware capture script
+- [x] Windows exact-target generator
 - [x] Versioned read-only ABI draft
+- [x] Ampere `NV_PMC_BOOT_42` offline decoder
+- [x] Portable PCI + NVIDIA identity tests
 - [x] DriverKit transport skeleton
+- [x] First-prototype diagnostic bundle script
 - [ ] Confirm the exact PCI hardware ID/subsystem ID of the target RTX 3060 Ti from Windows
-- [ ] Add captured-report parser/replay tests
-- [ ] Add protocol fuzz/unit tests
-- [ ] Audit all planned third-party source reuse and licenses
+- [ ] macOS 26 Intel compile validation of the DEXT
+- [ ] Audit the signed/local-development DriverKit activation path for the test machine
 
 **No macOS hardware test during this phase.**
 
@@ -25,7 +28,8 @@ One boot/test session should answer all of these at once:
 - What PCI command/status/config values does Tahoe expose?
 - Which BARs are available and what are their sizes/types?
 - Can BAR0 be mapped safely?
-- Can known read-only boot/status registers be read consistently?
+- Can `NV_PMC_BOOT_0` and `NV_PMC_BOOT_42` be read consistently?
+- Does the decoded architecture/implementation match the expected Ampere chip?
 - What does the active VT-d/DMAR/IOMMU environment look like?
 
 The probe must emit a single diagnostic bundle that can be copied back to Windows.
