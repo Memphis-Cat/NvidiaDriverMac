@@ -32,6 +32,26 @@ struct DmaCoverage {
 [[nodiscard]] DmaCoverage ValidateDmaSegments(std::span<const DmaSegment> segments,
                                               std::uint64_t requestedBytes) noexcept;
 
+enum class DmaLinearRangeStatus : std::uint8_t {
+  Ok = 0,
+  CoverageError,
+  AddressDiscontinuity,
+};
+
+struct DmaLinearRange {
+  DmaLinearRangeStatus status{DmaLinearRangeStatus::CoverageError};
+  std::uint64_t address{};
+  std::uint64_t length{};
+};
+
+// Resolve an exact scatter list into one GPU-linear [base, base+length) range.
+// Multiple returned segments are accepted only when each starts exactly where
+// the previous segment ended. This is required for boot structures whose ABI
+// supplies only a single physical/DMA base address plus a byte count.
+[[nodiscard]] DmaLinearRange ResolveLinearDmaRange(
+    std::span<const DmaSegment> segments,
+    std::uint64_t requestedBytes) noexcept;
+
 enum class DmaPageMapStatus : std::uint8_t {
   Ok = 0,
   InvalidPageSize,
