@@ -1,0 +1,69 @@
+name: NvidiaDriverMac
+
+options:
+  bundleIdPrefix: com.memphiscat
+  deploymentTarget:
+    macOS: "26.0"
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    CLANG_CXX_LANGUAGE_STANDARD: "c++20"
+    CLANG_CXX_LIBRARY: "libc++"
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  RTXMac:
+    type: driver-extension
+    platform: macOS
+    scheme: {}
+    sources:
+      - path: macos/Driver
+        excludes:
+          - README.md
+    dependencies:
+      - sdk: DriverKit.framework
+      - sdk: PCIDriverKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.memphiscat.RTXMacHost.RTXMac
+        PRODUCT_NAME: com.memphiscat.RTXMacHost.RTXMac
+        SDKROOT: driverkit
+        DRIVERKIT_DEPLOYMENT_TARGET: "25.2"
+        SUPPORTED_PLATFORMS: driverkit
+        ARCHS: "x86_64"
+        EXCLUDED_ARCHS[sdk=driverkit*]: "arm64"
+        ONLY_ACTIVE_ARCH: "NO"
+        INFOPLIST_FILE: macos/Driver/Info.plist
+        CODE_SIGN_ENTITLEMENTS: macos/Driver/RTXMac.entitlements
+        DEAD_CODE_STRIPPING: NO
+        DEFINES_MODULE: NO
+        HEADER_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/macos/Driver
+        OTHER_LDFLAGS: "$(inherited) -framework DriverKit -framework PCIDriverKit"
+
+  RTXMacHost:
+    type: application
+    platform: macOS
+    scheme: {}
+    sources:
+      - path: macos/Host
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.memphiscat.RTXMacHost
+        PRODUCT_NAME: RTXMacHost
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        ARCHS: "x86_64"
+        EXCLUDED_ARCHS: "arm64"
+        INFOPLIST_FILE: macos/Host/Info.plist
+        CODE_SIGN_ENTITLEMENTS: macos/Host/Host.entitlements
+        ENABLE_HARDENED_RUNTIME: NO
+        SYSTEM_EXTENSION_TARGETS: RTXMac
+    dependencies:
+      - target: RTXMac
+        embed: true
+        codeSign: false
