@@ -60,10 +60,14 @@ struct ResolvedArtifacts {
   std::array<std::uint8_t, kGspArgumentsCachedBytes> cachedArguments{};
   std::array<std::uint8_t, kWprMetaBytes> wprMetadata{};
   std::array<std::uint8_t, kLibosInitPageBytes> libosInitArguments{};
+  // Full page-table + command-queue + status-queue backing allocation.
+  std::vector<std::uint8_t> sharedQueueAllocation;
+  // Kept separately for diagnostics/comparison with NVIDIA queue construction.
   std::vector<std::uint8_t> bootstrapCommandQueue;
 };
 [[nodiscard]] std::optional<ResolvedArtifacts> BuildResolvedArtifacts(
     const BootManifest& manifest, const ResolvedAddresses& addresses, const fw::RiscvBootloaderInfo& bootloader,
+    std::span<const std::uint64_t> queueDmaPageAddresses,
     std::span<const LibosRegion> libosRegions, const GspSystemInfoInputs& systemInfo,
     std::span<const RegistryDwordEntry> bootstrapRegistry) noexcept;
 
