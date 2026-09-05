@@ -1,0 +1,23 @@
+# CMake / native builds
+/build/
+/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+*.sln
+*.vcxproj*
+*.pdb
+*.obj
+*.exe
+
+# Xcode / macOS
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+.DS_Store
+
+# Generated hardware captures
+/artifacts/
+*.hardware.json
