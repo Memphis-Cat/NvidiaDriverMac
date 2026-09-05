@@ -65,4 +65,19 @@ struct BootstrapQueueImage {
     const GspSystemInfoInputs& systemInfo,
     std::span<const RegistryDwordEntry> registry);
 
+struct SharedQueueAllocationImage {
+  std::vector<std::uint8_t> bytes;
+  std::array<std::uint8_t, kGspArgumentsCachedBytes> cachedArguments{};
+  BootstrapQueueImage commandQueue;
+};
+
+// Build the complete initial host-memory allocation consumed by GSP-RM:
+// page table + prefilled command queue + zeroed status queue. The supplied DMA
+// page list is in logical allocation order and includes the page-table page.
+[[nodiscard]] std::optional<SharedQueueAllocationImage> BuildSharedQueueAllocationImage(
+    const QueueMemoryLayout& layout,
+    std::span<const std::uint64_t> dmaPageAddresses,
+    const GspSystemInfoInputs& systemInfo,
+    std::span<const RegistryDwordEntry> registry);
+
 } // namespace rtxmac::nvidia::gsp
