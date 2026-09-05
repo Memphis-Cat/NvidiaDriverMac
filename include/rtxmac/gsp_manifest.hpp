@@ -21,7 +21,26 @@ enum class AllocationKind : std::uint8_t {
   QueueBacking, CachedArguments, LibosInitArguments, WprMetadata,
   Radix3Firmware, FirmwareSignature, GspBootloader, FrtsFwsecImage, Sec2BooterImage,
 };
-struct AllocationRequirement { AllocationKind kind{}; MemoryDomain domain{MemoryDomain::System}; std::uint64_t logicalBytes{}; std::uint64_t allocationBytes{}; std::uint64_t alignment{}; bool requiresDmaMapping{}; };
+
+enum class DmaLayoutRequirement : std::uint8_t {
+  None = 0,
+  // ABI exposes one base address + byte count. Returned DMA segments must form
+  // one adjacent GPU-visible range even if DriverKit reports several entries.
+  Linear,
+  // ABI has explicit page indirection (queue PTEs or Radix3), so genuinely
+  // fragmented page IOVAs are supported.
+  PageList,
+};
+
+struct AllocationRequirement {
+  AllocationKind kind{};
+  MemoryDomain domain{MemoryDomain::System};
+  std::uint64_t logicalBytes{};
+  std::uint64_t allocationBytes{};
+  std::uint64_t alignment{};
+  bool requiresDmaMapping{};
+  DmaLayoutRequirement dmaLayout{DmaLayoutRequirement::None};
+};
 
 struct ManifestInputs {
   std::uint64_t fbSize{}; std::uint64_t vgaWorkspaceOffset{}; std::uint64_t vbiosReservedOffset{}; std::uint64_t wprEndMargin{};
