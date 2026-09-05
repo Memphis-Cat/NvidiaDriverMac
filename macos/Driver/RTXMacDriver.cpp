@@ -6,6 +6,8 @@
 #include <DriverKit/IOMemoryMap.h>
 #include <PCIDriverKit/PCIDriverKit.h>
 
+#include <cstring>
+
 struct RTXMacDriver_IVars {
   IOPCIDevice* pci{nullptr};
 };
@@ -168,6 +170,9 @@ kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
   if (!pci || !memory || !out || length == 0 || length > kMaxDmaChunkBytes) {
     return kIOReturnBadArgument;
   }
+  if ((offset % kPageSize) != 0ull || (length % kPageSize) != 0ull) {
+    return kIOReturnBadArgument;
+  }
   if (offset > (~uint64_t{0}) - length) return kIOReturnBadArgument;
 
   ResetDmaChunk(out);
@@ -203,7 +208,10 @@ kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
   for (uint32_t i = 0; valid && i < segmentCount; ++i) {
     const uint64_t address = segments[i].address;
     const uint64_t bytes = segments[i].length;
-    if (bytes == 0 || address > (~uint64_t{0}) - bytes) {
+    if (bytes == 0 ||
+        (address % kPageSize) != 0ull ||
+        (bytes % kPageSize) != 0ull ||
+        address > (~uint64_t{0}) - (bytes - 1ull)) {
       valid = false;
       break;
     }
@@ -242,9 +250,83 @@ kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
   ResetPreparedDmaBuffer(prepared);
 }
 
+[[maybe_unused]] kern_return_t CollectDmaPageAddresses(
+    const PreparedDmaBuffer* prepared,
+    uint64_t* pageAddresses,
+    uint32_t pageCapacity,
+    uint32_t* pageCount) {
+  if (!prepared || !prepared->memory || !prepared->chunks || !pageAddresses || !pageCount ||
+      prepared->length == 0 || (prepared->length % kPageSize) != 0ull) {
+    return kIOReturnBadArgument;
+  }
+
+  const uint64_t expected64 = prepared->length / kPageSize;
+  if (expected64 == 0 || expected64 > 0xFFFFFFFFull || pageCapacity < expected64) {
+    return kIOReturnNoResources;
+  }
+  const uint32_t expected = static_cast<uint32_t>(expected64);
+
+  uint64_t expectedChunkOffset = 0;
+  uint32_t written = 0;
+  for (uint32_t c = 0; c < prepared->chunkCount; ++c) {
+    const PreparedDmaChunk& chunk = prepared->chunks[c];
+    if (!chunk.command || chunk.offset != expectedChunkOffset || chunk.length == 0 ||
+        (chunk.length % kPageSize) != 0ull || chunk.segmentCount == 0 ||
+        chunk.segmentCount > kMaxDmaSegments) {
+      return kIOReturnError;
+    }
+
+    uint64_t chunkCovered = 0;
+    for (uint32_t s = 0; s < chunk.segmentCount; ++s) {
+      const uint64_t address = chunk.segments[s].address;
+      const uint64_t bytes = chunk.segments[s].length;
+      if (bytes == 0 || (address % kPageSize) != 0ull || (bytes % kPageSize) != 0ull ||
+          address > (~uint64_t{0}) - (bytes - 1ull) ||
+          chunkCovered > chunk.length || bytes > chunk.length - chunkCovered) {
+        return kIOReturnError;
+      }
+
+      for (uint64_t off = 0; off < bytes; off += kPageSize) {
+        if (written >= expected) return kIOReturnError;
+        pageAddresses[written++] = address + off;
+      }
+      chunkCovered += bytes;
+    }
+
+    if (chunkCovered != chunk.length) return kIOReturnError;
+    if (expectedChunkOffset > (~uint64_t{0}) - chunk.length) return kIOReturnError;
+    expectedChunkOffset += chunk.length;
+  }
+
+  if (expectedChunkOffset != prepared->length || written != expected) return kIOReturnError;
+  *pageCount = written;
+  return kIOReturnSuccess;
+}
+
+[[maybe_unused]] kern_return_t CopyIntoPreparedDmaBuffer(
+    const PreparedDmaBuffer* prepared,
+    const void* source,
+    uint64_t sourceBytes) {
+  if (!prepared || !prepared->memory || !source || sourceBytes != prepared->length ||
+      sourceBytes == 0 || sourceBytes > static_cast<uint64_t>(~size_t{0})) {
+    return kIOReturnBadArgument;
+  }
+
+  IOAddressSegment range{};
+  kern_return_t kr = prepared->memory->GetAddressRange(&range);
+  if (kr != kIOReturnSuccess) return kr;
+  if (range.address == 0 || range.length < sourceBytes) return kIOReturnNoResources;
+
+  std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(range.address)),
+              source, static_cast<size_t>(sourceBytes));
+  return kIOReturnSuccess;
+}
+
 [[maybe_unused]] kern_return_t AllocateAndPrepareDmaBuffer(
     IOPCIDevice* pci, uint64_t length, PreparedDmaBuffer* out) {
-  if (!pci || !out || length == 0) return kIOReturnBadArgument;
+  if (!pci || !out || length == 0 || (length % kPageSize) != 0ull) {
+    return kIOReturnBadArgument;
+  }
   ResetPreparedDmaBuffer(out);
 
   if (length > (~uint64_t{0}) - (kMaxDmaChunkBytes - 1ull)) {
@@ -262,6 +344,14 @@ kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
       kIOMemoryDirectionInOut, length, kPageSize, &memory);
   if (kr != kIOReturnSuccess || !memory) {
     return kr == kIOReturnSuccess ? kIOReturnNoMemory : kr;
+  }
+
+  // Create() establishes capacity. SetLength() marks the complete allocation as
+  // valid before any subrange is handed to PrepareForDMA.
+  kr = memory->SetLength(length);
+  if (kr != kIOReturnSuccess) {
+    memory->release();
+    return kr;
   }
 
   PreparedDmaChunk* chunks = new PreparedDmaChunk[chunkCount]();
@@ -342,9 +432,9 @@ kern_return_t RTXMacDriver::Start_Impl(IOService* provider) {
     }
   }
 
-  // Prototype 1 is intentionally read-only. DMA allocation/preparation helpers
-  // are compiled but are not invoked from Start. No config writes, MMIO writes,
-  // resets, firmware loading, or GSP boot are performed.
+  // Prototype 1 is intentionally read-only. DMA allocation/preparation/page
+  // enumeration/host-fill helpers are compiled but are not invoked from Start.
+  // No config writes, MMIO writes, resets, firmware loading, or GSP boot occur.
   LogDiagnosticSnapshot(this, ivars->pci);
 
   RegisterService();
