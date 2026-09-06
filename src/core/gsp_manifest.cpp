@@ -16,6 +16,48 @@ falcon::Action Write32(std::uint32_t a,std::uint32_t v){return {falcon::ActionKi
 bool AddressesOk(const ResolvedAddresses&a) noexcept{return PageAligned(a.queueBacking)&&PageAligned(a.cachedArguments)&&PageAligned(a.libosInitArguments)&&PageAligned(a.wprMetadata)&&PageAligned(a.radix3FirmwareRoot)&&PageAligned(a.firmwareSignature)&&PageAligned(a.gspBootloader)&&PageAligned(a.frtsFwsecImage)&&PageAligned(a.sec2BooterImage);}
 }
 
+std::optional<ResolvedDmaAllocation> ResolveSystemDmaAllocation(
+    const AllocationRequirement& requirement,
+    std::span<const rtxmac::DmaSegment> segments) noexcept {
+  if (requirement.domain != MemoryDomain::System || !requirement.requiresDmaMapping ||
+      requirement.dmaLayout == DmaLayoutRequirement::None ||
+      requirement.allocationBytes == 0 || requirement.alignment == 0) {
+    return std::nullopt;
+  }
+
+  ResolvedDmaAllocation out{};
+  out.kind = requirement.kind;
+  out.layout = requirement.dmaLayout;
+  out.allocationBytes = requirement.allocationBytes;
+
+  if (requirement.dmaLayout == DmaLayoutRequirement::Linear) {
+    const auto linear = rtxmac::ResolveLinearDmaRange(segments, requirement.allocationBytes);
+    if (linear.status != rtxmac::DmaLinearRangeStatus::Ok ||
+        linear.length != requirement.allocationBytes ||
+        (linear.address % requirement.alignment) != 0u) {
+      return std::nullopt;
+    }
+    out.baseAddress = linear.address;
+    return out;
+  }
+
+  if (requirement.dmaLayout == DmaLayoutRequirement::PageList) {
+    // Current Ampere queue/Radix3 formats use 4 KiB physical pages. Keep this
+    // independent of a larger allocation alignment so the ABI stays explicit.
+    const auto pages = rtxmac::ExpandDmaSegmentsToPages(
+        segments, requirement.allocationBytes, kPage);
+    if (pages.status != rtxmac::DmaPageMapStatus::Ok || pages.pageAddresses.empty() ||
+        (pages.pageAddresses.front() % requirement.alignment) != 0u) {
+      return std::nullopt;
+    }
+    out.baseAddress = pages.pageAddresses.front();
+    out.pageAddresses = pages.pageAddresses;
+    return out;
+  }
+
+  return std::nullopt;
+}
+
 BootManifest PlanBootManifest(const ManifestInputs& in){
   BootManifest o{};o.inputs=in;if(!in.gspFirmwareImageBytes||!in.gspSignatureBytes||!in.gspBootloaderBytes||!in.frtsFwsecImageBytes||!in.sec2BooterImageBytes)return o;
   auto q=PlanQueueMemory(in.queueBytes);auto r=PlanRadix3(in.gspFirmwareImageBytes);auto w=PlanWprLayout({in.fbSize,in.vgaWorkspaceOffset,in.vbiosReservedOffset,in.wprEndMargin,in.frtsSize,in.gspBootloaderBytes,in.gspFirmwareImageBytes,in.nonWprHeapSize,in.requestedWprHeapSize});
