@@ -18,6 +18,8 @@ public:
 
   kern_return_t ValidatePackage(IOUserClientMethodArguments* arguments) LOCALONLY;
   kern_return_t GetValidationStatus(IOUserClientMethodArguments* arguments) LOCALONLY;
+  kern_return_t StagePackage(IOUserClientMethodArguments* arguments) LOCALONLY;
+  kern_return_t GetStagingStatus(IOUserClientMethodArguments* arguments) LOCALONLY;
 };
 
 #endif
