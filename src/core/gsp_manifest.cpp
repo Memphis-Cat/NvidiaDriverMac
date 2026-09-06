@@ -14,6 +14,59 @@ void AddAlloc(BootManifest& o,AllocationKind k,MemoryDomain d,std::uint64_t l,st
 void AppendActions(PhasePlan& p,const falcon::Plan& x){p.actions.insert(p.actions.end(),x.actions.begin(),x.actions.end());}
 falcon::Action Write32(std::uint32_t a,std::uint32_t v){return {falcon::ActionKind::Write32,a,v,0xFFFFFFFFu,0u};}
 bool AddressesOk(const ResolvedAddresses&a) noexcept{return PageAligned(a.queueBacking)&&PageAligned(a.cachedArguments)&&PageAligned(a.libosInitArguments)&&PageAligned(a.wprMetadata)&&PageAligned(a.radix3FirmwareRoot)&&PageAligned(a.firmwareSignature)&&PageAligned(a.gspBootloader)&&PageAligned(a.frtsFwsecImage)&&PageAligned(a.sec2BooterImage);}
+
+const AllocationRequirement* FindAllocation(const BootManifest& manifest, AllocationKind kind) noexcept {
+  for (const auto& requirement : manifest.allocations) {
+    if (requirement.kind == kind) return &requirement;
+  }
+  return nullptr;
+}
+
+bool MakeFramebufferStageImage(const BootManifest& manifest,
+                               AllocationKind kind,
+                               std::uint64_t vramOffset,
+                               FramebufferStageImage& out) noexcept {
+  const AllocationRequirement* requirement = FindAllocation(manifest, kind);
+  if (!requirement || requirement->domain != MemoryDomain::Framebuffer ||
+      requirement->requiresDmaMapping || requirement->dmaLayout != DmaLayoutRequirement::None ||
+      requirement->logicalBytes == 0 || requirement->allocationBytes == 0 ||
+      requirement->alignment == 0 || (vramOffset % requirement->alignment) != 0u) {
+    return false;
+  }
+
+  if (manifest.wpr.fbSize == 0 || manifest.wpr.gspFwRsvdStart > manifest.wpr.fbSize ||
+      vramOffset >= manifest.wpr.fbSize ||
+      requirement->allocationBytes > manifest.wpr.fbSize - vramOffset) {
+    return false;
+  }
+  const std::uint64_t end = vramOffset + requirement->allocationBytes;
+
+  // Temporary source images must not occupy NVIDIA's GSP reserved/WPR/VBIOS
+  // tail. Falcon DMA reads them from framebuffer memory before that tail is
+  // used for the protected runtime layout.
+  if (end > manifest.wpr.gspFwRsvdStart) return false;
+
+  auto pramin = rtxmac::nvidia::PlanPraminStage(
+      vramOffset, requirement->allocationBytes, manifest.wpr.fbSize);
+  if (!pramin.valid) return false;
+
+  out = FramebufferStageImage{
+      .kind = kind,
+      .vramOffset = vramOffset,
+      .logicalBytes = requirement->logicalBytes,
+      .allocationBytes = requirement->allocationBytes,
+      .pramin = std::move(pramin),
+  };
+  return true;
+}
+
+bool RangesOverlap(std::uint64_t aStart, std::uint64_t aBytes,
+                   std::uint64_t bStart, std::uint64_t bBytes) noexcept {
+  // Inputs were already proven to fit in framebuffer, so additions are safe.
+  const std::uint64_t aEnd = aStart + aBytes;
+  const std::uint64_t bEnd = bStart + bBytes;
+  return aStart < bEnd && bStart < aEnd;
+}
 }
 
 std::optional<ResolvedDmaAllocation> ResolveSystemDmaAllocation(
@@ -76,6 +129,32 @@ BootManifest PlanBootManifest(const ManifestInputs& in){
   AddAlloc(o,AllocationKind::FrtsFwsecImage,MemoryDomain::Framebuffer,in.frtsFwsecImageBytes,kPage,DmaLayoutRequirement::None);
   AddAlloc(o,AllocationKind::Sec2BooterImage,MemoryDomain::Framebuffer,in.sec2BooterImageBytes,kPage,DmaLayoutRequirement::None);
   return o;
+}
+
+FramebufferStagingPlan PlanFramebufferStaging(
+    const BootManifest& manifest,
+    const ResolvedAddresses& addresses) noexcept {
+  FramebufferStagingPlan out{};
+  if (!manifest.valid || !AddressesOk(addresses)) return out;
+
+  FramebufferStageImage frts{};
+  FramebufferStageImage sec2{};
+  if (!MakeFramebufferStageImage(
+          manifest, AllocationKind::FrtsFwsecImage, addresses.frtsFwsecImage, frts) ||
+      !MakeFramebufferStageImage(
+          manifest, AllocationKind::Sec2BooterImage, addresses.sec2BooterImage, sec2)) {
+    return out;
+  }
+
+  if (RangesOverlap(frts.vramOffset, frts.allocationBytes,
+                    sec2.vramOffset, sec2.allocationBytes)) {
+    return out;
+  }
+
+  out.images.push_back(std::move(frts));
+  out.images.push_back(std::move(sec2));
+  out.valid = true;
+  return out;
 }
 
 std::optional<ResolvedArtifacts> BuildResolvedArtifacts(const BootManifest&m,const ResolvedAddresses&a,const fw::RiscvBootloaderInfo& bl,std::span<const std::uint64_t> queuePages,std::span<const std::uint64_t> radixPages,std::span<const std::uint8_t> firmware,std::span<const LibosRegion> regions,const GspSystemInfoInputs& sys,std::span<const RegistryDwordEntry> registry) noexcept{
