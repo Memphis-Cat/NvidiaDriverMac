@@ -58,14 +58,6 @@ std::optional<PciIdentity> ParseWindowsPciHardwareId(std::string_view text) {
   return result;
 }
 
-bool IsNvidia(const PciIdentity& id) noexcept { return id.vendor == 0x10DE; }
-
-bool IsKnownRtx3060Ti(const PciIdentity& id) noexcept {
-  // 0x2489 is a confirmed GA104 RTX 3060 Ti device ID seen in existing
-  // macOS/TinyGPU research. This is intentionally not claimed to be exhaustive.
-  return IsNvidia(id) && id.device == 0x2489;
-}
-
 std::string Describe(const PciIdentity& id) {
   std::ostringstream out;
   out << std::hex << std::uppercase << std::setfill('0');
