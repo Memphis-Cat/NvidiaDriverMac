@@ -28,6 +28,11 @@ int main() {
   {
     const auto plan = PlanPackageDmaStaging(MakeView());
     assert(plan.status == DmaStagingPlanStatus::Ok);
+    assert(plan.sections[0].layout == DmaSectionLayout::PageList);
+    assert(plan.sections[1].layout == DmaSectionLayout::Linear);
+    assert(plan.sections[2].layout == DmaSectionLayout::Linear);
+    assert(plan.sections[3].layout == DmaSectionLayout::PageList);
+    assert(plan.sections[4].layout == DmaSectionLayout::PageList);
     assert(plan.sections[0].logicalBytes == 1u);
     assert(plan.sections[0].allocationBytes == 0x1000u);
     assert(plan.sections[0].pageCount == 1u);
