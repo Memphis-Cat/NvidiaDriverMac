@@ -31,20 +31,6 @@ void ReleaseAndRestoreFailure(
   staged->totalAllocationBytes = plan.totalAllocationBytes;
 }
 
-bool IsLinearPageList(const std::uint64_t* pages,
-                      std::uint32_t pageCount) noexcept {
-  if (!pages || pageCount == 0u) return false;
-  for (std::uint32_t i = 1u; i < pageCount; ++i) {
-    const std::uint64_t previous = pages[i - 1u];
-    if (previous > std::numeric_limits<std::uint64_t>::max() -
-                       kRTXMacDmaPageBytes ||
-        pages[i] != previous + kRTXMacDmaPageBytes) {
-      return false;
-    }
-  }
-  return true;
-}
-
 } // namespace
 
 kern_return_t RTXMacStageVerifiedPackage(
@@ -142,13 +128,15 @@ kern_return_t RTXMacStageVerifiedPackage(
     }
     stagedSection.pageCount = pageCount;
 
-    if (sectionPlan.layout == DmaSectionLayout::Linear &&
-        !IsLinearPageList(stagedSection.pageAddresses,
-                          stagedSection.pageCount)) {
-      ReleaseAndRestoreFailure(
-          out, plan, RTXMacPackageStageStatus::DmaLayoutRejected,
-          kIOReturnNoResources, static_cast<std::uint32_t>(i));
-      return kIOReturnNoResources;
+    if (sectionPlan.layout == DmaSectionLayout::Linear) {
+      const std::span<const std::uint64_t> pages(
+          stagedSection.pageAddresses, stagedSection.pageCount);
+      if (!IsLinearDmaPageList(pages, kRTXMacDmaPageBytes)) {
+        ReleaseAndRestoreFailure(
+            out, plan, RTXMacPackageStageStatus::DmaLayoutRejected,
+            kIOReturnNoResources, static_cast<std::uint32_t>(i));
+        return kIOReturnNoResources;
+      }
     }
   }
 
