@@ -24,10 +24,13 @@ enum class RTXMacPackageStageStatus : std::uint32_t {
   DmaPopulationFailed,
   PageAddressAllocationFailed,
   PageAddressValidationFailed,
+  DmaLayoutRejected,
 };
 
 struct RTXMacStagedPackageSection {
   rtxmac::nvidia::package::SectionKind kind{};
+  rtxmac::nvidia::package::DmaSectionLayout layout{
+      rtxmac::nvidia::package::DmaSectionLayout::PageList};
   std::uint64_t logicalBytes{};
   std::uint64_t allocationBytes{};
   RTXMacPreparedDmaBuffer dma{};
@@ -50,8 +53,9 @@ struct RTXMacStagedPackage {
 
 // The caller supplies bytes that have already passed ParseAndVerify(), semantic
 // policy, and live PCI identity matching. This function rechecks the structural
-// staging preconditions before allocating. out must be zero/default initialized
-// or previously produced by this API.
+// staging preconditions before allocating. Linear-plan sections are additionally
+// rejected unless every returned DMA page is physically contiguous. out must be
+// zero/default initialized or previously produced by this API.
 [[nodiscard]] kern_return_t RTXMacStageVerifiedPackage(
     IOPCIDevice* pci,
     std::span<const std::uint8_t> bytes,
