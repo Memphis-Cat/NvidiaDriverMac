@@ -5,6 +5,7 @@
 #include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/PCIDriverKit.h>
 
+#include <cstddef>
 #include <cstdint>
 
 constexpr std::uint64_t kRTXMacDmaPageBytes = 0x1000ull;
