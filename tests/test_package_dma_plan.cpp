@@ -1,5 +1,6 @@
 #include "rtxmac/package_dma_plan.hpp"
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <limits>
@@ -43,6 +44,31 @@ int main() {
     assert(plan.sections[4].allocationBytes == 0x2000u);
     assert(plan.totalLogicalBytes == 1u + 0x1000u + 0x1001u + 0x1fffu + 0x2000u);
     assert(plan.totalAllocationBytes == 0x8000u);
+  }
+
+  {
+    const std::array<std::uint64_t, 1> onePage{0x10000000ull};
+    assert(IsLinearDmaPageList(onePage));
+
+    const std::array<std::uint64_t, 4> contiguous{
+        0x20000000ull, 0x20001000ull, 0x20002000ull, 0x20003000ull};
+    assert(IsLinearDmaPageList(contiguous));
+
+    const std::array<std::uint64_t, 3> fragmented{
+        0x30000000ull, 0x30001000ull, 0x31000000ull};
+    assert(!IsLinearDmaPageList(fragmented));
+
+    const std::array<std::uint64_t, 2> unaligned{
+        0x40000000ull, 0x40001001ull};
+    assert(!IsLinearDmaPageList(unaligned));
+
+    constexpr std::uint64_t kHighestAligned =
+        std::numeric_limits<std::uint64_t>::max() - 0xfffull;
+    const std::array<std::uint64_t, 2> wrapped{kHighestAligned, 0u};
+    assert(!IsLinearDmaPageList(wrapped));
+
+    assert(!IsLinearDmaPageList({}));
+    assert(!IsLinearDmaPageList(onePage, 3000u));
   }
 
   {
