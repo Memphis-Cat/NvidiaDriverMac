@@ -1,64 +1,22 @@
 #include "RTXMacDriver.h"
 
-#include <DriverKit/IOBufferMemoryDescriptor.h>
-#include <DriverKit/IODMACommand.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOMemoryMap.h>
 #include <PCIDriverKit/PCIDriverKit.h>
 
-#include <cstring>
+#include <cstdint>
 
 struct RTXMacDriver_IVars {
   IOPCIDevice* pci{nullptr};
 };
 
 namespace {
-constexpr uint64_t kPageSize = 0x1000ull;
-constexpr uint32_t kMaxDmaSegments = 32u;
-constexpr uint64_t kMaxDmaChunkBytes = static_cast<uint64_t>(kMaxDmaSegments) * kPageSize;
-constexpr uint8_t kDmaAddressBits = 40u;
+constexpr std::uint64_t kPageSize = 0x1000ull;
 
 struct DiagnosticRegister {
   const char* name;
-  uint64_t offset;
+  std::uint64_t offset;
 };
-
-struct PreparedDmaChunk {
-  IODMACommand* command{nullptr};
-  IOAddressSegment segments[kMaxDmaSegments]{};
-  uint32_t segmentCount{0};
-  uint64_t flags{0};
-  uint64_t offset{0};
-  uint64_t length{0};
-};
-
-struct PreparedDmaBuffer {
-  IOBufferMemoryDescriptor* memory{nullptr};
-  PreparedDmaChunk* chunks{nullptr};
-  uint32_t chunkCount{0};
-  uint64_t length{0};
-};
-
-void ResetDmaChunk(PreparedDmaChunk* chunk) {
-  if (!chunk) return;
-  chunk->command = nullptr;
-  chunk->segmentCount = 0;
-  chunk->flags = 0;
-  chunk->offset = 0;
-  chunk->length = 0;
-  for (uint32_t i = 0; i < kMaxDmaSegments; ++i) {
-    chunk->segments[i].address = 0;
-    chunk->segments[i].length = 0;
-  }
-}
-
-void ResetPreparedDmaBuffer(PreparedDmaBuffer* prepared) {
-  if (!prepared) return;
-  prepared->memory = nullptr;
-  prepared->chunks = nullptr;
-  prepared->chunkCount = 0;
-  prepared->length = 0;
-}
 
 // Read-only diagnostic snapshot. Every offset is cross-checked against
 // NVIDIA's published Ampere/Turing-compatible register headers and the
@@ -77,11 +35,13 @@ constexpr DiagnosticRegister kDiagnosticRegisters[] = {
   {"NV_PSEC_FALCON_MAILBOX1",               0x00840044ull},
 };
 
-kern_return_t CopyBar0(IOService* owner, IOPCIDevice* pci,
-                       IOMemoryDescriptor** descriptor, uint64_t* size) {
+kern_return_t CopyBar0(IOService* owner,
+                       IOPCIDevice* pci,
+                       IOMemoryDescriptor** descriptor,
+                       std::uint64_t* size) {
   if (!owner || !pci || !descriptor || !size) return kIOReturnBadArgument;
 
-  uint8_t memoryIndex = 0, memoryType = 0;
+  std::uint8_t memoryIndex = 0, memoryType = 0;
   kern_return_t kr = pci->GetBARInfo(0, &memoryIndex, size, &memoryType);
   if (kr != kIOReturnSuccess) return kr;
 
@@ -93,29 +53,33 @@ kern_return_t CopyBar0(IOService* owner, IOPCIDevice* pci,
   return kIOReturnSuccess;
 }
 
-kern_return_t ReadBar0Register(IOMemoryDescriptor* bar0, uint64_t bar0Size,
-                               uint64_t offset, uint32_t* value) {
-  if (!bar0 || !value) return kIOReturnBadArgument;
-  if ((offset & 3ull) != 0ull) return kIOReturnBadArgument;
-  if (offset + sizeof(uint32_t) > bar0Size) return kIOReturnNoResources;
+kern_return_t ReadBar0Register(IOMemoryDescriptor* bar0,
+                               std::uint64_t bar0Size,
+                               std::uint64_t offset,
+                               std::uint32_t* value) {
+  if (!bar0 || !value || (offset & 3ull) != 0ull ||
+      offset > bar0Size || sizeof(std::uint32_t) > bar0Size - offset) {
+    return kIOReturnBadArgument;
+  }
 
-  const uint64_t pageBase = offset & ~(kPageSize - 1ull);
-  const uint64_t inPage = offset - pageBase;
-  const uint64_t mapLength = (pageBase + kPageSize <= bar0Size)
-      ? kPageSize
-      : (bar0Size - pageBase);
-  if (inPage + sizeof(uint32_t) > mapLength) return kIOReturnNoResources;
+  const std::uint64_t pageBase = offset & ~(kPageSize - 1ull);
+  const std::uint64_t inPage = offset - pageBase;
+  const std::uint64_t mapLength =
+      pageBase + kPageSize <= bar0Size ? kPageSize : bar0Size - pageBase;
+  if (inPage + sizeof(std::uint32_t) > mapLength) return kIOReturnNoResources;
 
   IOMemoryMap* map = nullptr;
-  // DriverKit CreateMapping is (options, address, offset, length, alignment, map).
-  // Map only the BAR page that contains the requested register.
   kern_return_t kr = bar0->CreateMapping(0, 0, pageBase, mapLength, 0, &map);
   if (kr != kIOReturnSuccess || !map) {
     return kr == kIOReturnSuccess ? kIOReturnError : kr;
   }
 
-  const auto base = static_cast<uintptr_t>(map->GetAddress());
-  const volatile uint32_t* ptr = reinterpret_cast<const volatile uint32_t*>(base + inPage);
+  const auto base = static_cast<std::uintptr_t>(map->GetAddress());
+  if (base == 0u) {
+    map->release();
+    return kIOReturnNoResources;
+  }
+  const auto* ptr = reinterpret_cast<const volatile std::uint32_t*>(base + inPage);
   *value = *ptr;
   map->release();
   return kIOReturnSuccess;
@@ -123,7 +87,7 @@ kern_return_t ReadBar0Register(IOMemoryDescriptor* bar0, uint64_t bar0Size,
 
 void LogDiagnosticSnapshot(IOService* owner, IOPCIDevice* pci) {
   IOMemoryDescriptor* bar0 = nullptr;
-  uint64_t bar0Size = 0;
+  std::uint64_t bar0Size = 0;
   const kern_return_t copyKr = CopyBar0(owner, pci, &bar0, &bar0Size);
   if (copyKr != kIOReturnSuccess) {
     os_log(OS_LOG_DEFAULT, "rtxmac: snapshot BAR0 unavailable kr=0x%x", copyKr);
@@ -132,256 +96,30 @@ void LogDiagnosticSnapshot(IOService* owner, IOPCIDevice* pci) {
 
   os_log(OS_LOG_DEFAULT, "rtxmac: snapshot begin BAR0-size=0x%llx", bar0Size);
   for (const auto& reg : kDiagnosticRegisters) {
-    uint32_t value = 0;
+    std::uint32_t value = 0;
     const kern_return_t kr = ReadBar0Register(bar0, bar0Size, reg.offset, &value);
     if (kr == kIOReturnSuccess) {
       os_log(OS_LOG_DEFAULT, "rtxmac: snapshot %s @0x%llx = 0x%08x",
              reg.name, reg.offset, value);
 
       if (reg.offset == 0x00111388ull) {
-        const uint32_t active = (value >> 7u) & 1u;
-        const uint32_t halted = (value >> 4u) & 1u;
-        os_log(OS_LOG_DEFAULT, "rtxmac: snapshot GSP-CPUCTL active=%u halted=%u", active, halted);
-      } else if (reg.offset == 0x001183A4ull && value != 0u && value != 0xFFFFFFFFu) {
+        const std::uint32_t active = (value >> 7u) & 1u;
+        const std::uint32_t halted = (value >> 4u) & 1u;
+        os_log(OS_LOG_DEFAULT,
+               "rtxmac: snapshot GSP-CPUCTL active=%u halted=%u",
+               active, halted);
+      } else if (reg.offset == 0x001183A4ull &&
+                 value != 0u && value != 0xFFFFFFFFu) {
         os_log(OS_LOG_DEFAULT, "rtxmac: snapshot reported-vram=%u MiB", value);
       }
     } else {
-      os_log(OS_LOG_DEFAULT, "rtxmac: snapshot %s @0x%llx read-failed kr=0x%x",
+      os_log(OS_LOG_DEFAULT,
+             "rtxmac: snapshot %s @0x%llx read-failed kr=0x%x",
              reg.name, reg.offset, kr);
     }
   }
   os_log(OS_LOG_DEFAULT, "rtxmac: snapshot end");
-
   bar0->release();
-}
-
-void CompleteDmaChunk(PreparedDmaChunk* chunk) {
-  if (!chunk) return;
-  if (chunk->command) {
-    chunk->command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-    chunk->command->release();
-  }
-  ResetDmaChunk(chunk);
-}
-
-kern_return_t PrepareDmaChunk(IOPCIDevice* pci, IOMemoryDescriptor* memory,
-                              uint64_t offset, uint64_t length,
-                              PreparedDmaChunk* out) {
-  if (!pci || !memory || !out || length == 0 || length > kMaxDmaChunkBytes) {
-    return kIOReturnBadArgument;
-  }
-  if ((offset % kPageSize) != 0ull || (length % kPageSize) != 0ull) {
-    return kIOReturnBadArgument;
-  }
-  if (offset > (~uint64_t{0}) - length) return kIOReturnBadArgument;
-
-  ResetDmaChunk(out);
-  IODMACommandSpecification spec = {};
-  spec.options = 0;
-  spec.maxAddressBits = kDmaAddressBits;
-
-  IODMACommand* command = nullptr;
-  kern_return_t kr = IODMACommand::Create(
-      pci, kIODMACommandCreateNoOptions, &spec, &command);
-  if (kr != kIOReturnSuccess || !command) {
-    return kr == kIOReturnSuccess ? kIOReturnError : kr;
-  }
-
-  uint64_t flags = kIOMemoryDirectionInOut;
-  uint32_t segmentCount = kMaxDmaSegments;
-  IOAddressSegment segments[kMaxDmaSegments]{};
-  kr = command->PrepareForDMA(
-      kIODMACommandPrepareForDMANoOptions,
-      memory,
-      offset,
-      length,
-      &flags,
-      &segmentCount,
-      segments);
-  if (kr != kIOReturnSuccess) {
-    command->release();
-    return kr;
-  }
-
-  bool valid = segmentCount > 0 && segmentCount <= kMaxDmaSegments;
-  uint64_t covered = 0;
-  for (uint32_t i = 0; valid && i < segmentCount; ++i) {
-    const uint64_t address = segments[i].address;
-    const uint64_t bytes = segments[i].length;
-    if (bytes == 0 ||
-        (address % kPageSize) != 0ull ||
-        (bytes % kPageSize) != 0ull ||
-        address > (~uint64_t{0}) - (bytes - 1ull)) {
-      valid = false;
-      break;
-    }
-    if (covered > length || bytes > length - covered) {
-      valid = false;
-      break;
-    }
-    covered += bytes;
-  }
-  valid = valid && covered == length;
-
-  if (!valid) {
-    command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-    command->release();
-    return kIOReturnError;
-  }
-
-  out->command = command;
-  out->segmentCount = segmentCount;
-  out->flags = flags;
-  out->offset = offset;
-  out->length = length;
-  for (uint32_t i = 0; i < segmentCount; ++i) out->segments[i] = segments[i];
-  return kIOReturnSuccess;
-}
-
-[[maybe_unused]] void ReleasePreparedDmaBuffer(PreparedDmaBuffer* prepared) {
-  if (!prepared) return;
-  if (prepared->chunks) {
-    for (uint32_t i = 0; i < prepared->chunkCount; ++i) {
-      CompleteDmaChunk(&prepared->chunks[i]);
-    }
-    delete[] prepared->chunks;
-  }
-  if (prepared->memory) prepared->memory->release();
-  ResetPreparedDmaBuffer(prepared);
-}
-
-[[maybe_unused]] kern_return_t CollectDmaPageAddresses(
-    const PreparedDmaBuffer* prepared,
-    uint64_t* pageAddresses,
-    uint32_t pageCapacity,
-    uint32_t* pageCount) {
-  if (!prepared || !prepared->memory || !prepared->chunks || !pageAddresses || !pageCount ||
-      prepared->length == 0 || (prepared->length % kPageSize) != 0ull) {
-    return kIOReturnBadArgument;
-  }
-
-  const uint64_t expected64 = prepared->length / kPageSize;
-  if (expected64 == 0 || expected64 > 0xFFFFFFFFull || pageCapacity < expected64) {
-    return kIOReturnNoResources;
-  }
-  const uint32_t expected = static_cast<uint32_t>(expected64);
-
-  uint64_t expectedChunkOffset = 0;
-  uint32_t written = 0;
-  for (uint32_t c = 0; c < prepared->chunkCount; ++c) {
-    const PreparedDmaChunk& chunk = prepared->chunks[c];
-    if (!chunk.command || chunk.offset != expectedChunkOffset || chunk.length == 0 ||
-        (chunk.length % kPageSize) != 0ull || chunk.segmentCount == 0 ||
-        chunk.segmentCount > kMaxDmaSegments) {
-      return kIOReturnError;
-    }
-
-    uint64_t chunkCovered = 0;
-    for (uint32_t s = 0; s < chunk.segmentCount; ++s) {
-      const uint64_t address = chunk.segments[s].address;
-      const uint64_t bytes = chunk.segments[s].length;
-      if (bytes == 0 || (address % kPageSize) != 0ull || (bytes % kPageSize) != 0ull ||
-          address > (~uint64_t{0}) - (bytes - 1ull) ||
-          chunkCovered > chunk.length || bytes > chunk.length - chunkCovered) {
-        return kIOReturnError;
-      }
-
-      for (uint64_t off = 0; off < bytes; off += kPageSize) {
-        if (written >= expected) return kIOReturnError;
-        pageAddresses[written++] = address + off;
-      }
-      chunkCovered += bytes;
-    }
-
-    if (chunkCovered != chunk.length) return kIOReturnError;
-    if (expectedChunkOffset > (~uint64_t{0}) - chunk.length) return kIOReturnError;
-    expectedChunkOffset += chunk.length;
-  }
-
-  if (expectedChunkOffset != prepared->length || written != expected) return kIOReturnError;
-  *pageCount = written;
-  return kIOReturnSuccess;
-}
-
-[[maybe_unused]] kern_return_t CopyIntoPreparedDmaBuffer(
-    const PreparedDmaBuffer* prepared,
-    const void* source,
-    uint64_t sourceBytes) {
-  if (!prepared || !prepared->memory || !source || sourceBytes != prepared->length ||
-      sourceBytes == 0 || sourceBytes > static_cast<uint64_t>(~size_t{0})) {
-    return kIOReturnBadArgument;
-  }
-
-  IOAddressSegment range{};
-  kern_return_t kr = prepared->memory->GetAddressRange(&range);
-  if (kr != kIOReturnSuccess) return kr;
-  if (range.address == 0 || range.length < sourceBytes) return kIOReturnNoResources;
-
-  std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(range.address)),
-              source, static_cast<size_t>(sourceBytes));
-  return kIOReturnSuccess;
-}
-
-[[maybe_unused]] kern_return_t AllocateAndPrepareDmaBuffer(
-    IOPCIDevice* pci, uint64_t length, PreparedDmaBuffer* out) {
-  if (!pci || !out || length == 0 || (length % kPageSize) != 0ull) {
-    return kIOReturnBadArgument;
-  }
-  ResetPreparedDmaBuffer(out);
-
-  if (length > (~uint64_t{0}) - (kMaxDmaChunkBytes - 1ull)) {
-    return kIOReturnNoResources;
-  }
-  const uint64_t chunkCount64 =
-      (length + kMaxDmaChunkBytes - 1ull) / kMaxDmaChunkBytes;
-  if (chunkCount64 == 0 || chunkCount64 > 0xFFFFFFFFull) {
-    return kIOReturnNoResources;
-  }
-  const uint32_t chunkCount = static_cast<uint32_t>(chunkCount64);
-
-  IOBufferMemoryDescriptor* memory = nullptr;
-  kern_return_t kr = IOBufferMemoryDescriptor::Create(
-      kIOMemoryDirectionInOut, length, kPageSize, &memory);
-  if (kr != kIOReturnSuccess || !memory) {
-    return kr == kIOReturnSuccess ? kIOReturnNoMemory : kr;
-  }
-
-  // Create() establishes capacity. SetLength() marks the complete allocation as
-  // valid before any subrange is handed to PrepareForDMA.
-  kr = memory->SetLength(length);
-  if (kr != kIOReturnSuccess) {
-    memory->release();
-    return kr;
-  }
-
-  PreparedDmaChunk* chunks = new PreparedDmaChunk[chunkCount]();
-  if (!chunks) {
-    memory->release();
-    return kIOReturnNoMemory;
-  }
-
-  uint32_t preparedCount = 0;
-  for (uint32_t i = 0; i < chunkCount; ++i) {
-    const uint64_t offset = static_cast<uint64_t>(i) * kMaxDmaChunkBytes;
-    const uint64_t remaining = length - offset;
-    const uint64_t chunkLength =
-        remaining < kMaxDmaChunkBytes ? remaining : kMaxDmaChunkBytes;
-
-    kr = PrepareDmaChunk(pci, memory, offset, chunkLength, &chunks[i]);
-    if (kr != kIOReturnSuccess) {
-      for (uint32_t j = 0; j < preparedCount; ++j) CompleteDmaChunk(&chunks[j]);
-      delete[] chunks;
-      memory->release();
-      return kr;
-    }
-    ++preparedCount;
-  }
-
-  out->memory = memory;
-  out->chunks = chunks;
-  out->chunkCount = chunkCount;
-  out->length = length;
-  return kIOReturnSuccess;
 }
 } // namespace
 
@@ -409,8 +147,8 @@ kern_return_t RTXMacDriver::Start_Impl(IOService* provider) {
     return kr;
   }
 
-  uint16_t vendor = 0, device = 0, subsystemVendor = 0, subsystemDevice = 0;
-  uint8_t revision = 0;
+  std::uint16_t vendor = 0, device = 0, subsystemVendor = 0, subsystemDevice = 0;
+  std::uint8_t revision = 0;
   ivars->pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendor);
   ivars->pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &device);
   ivars->pci->ConfigurationRead8(kIOPCIConfigurationOffsetRevisionID, &revision);
@@ -421,10 +159,11 @@ kern_return_t RTXMacDriver::Start_Impl(IOService* provider) {
          "rtxmac: PCI %04x:%04x subsystem %04x:%04x rev %02x",
          vendor, device, subsystemVendor, subsystemDevice, revision);
 
-  for (uint8_t bar = 0; bar < 6; ++bar) {
-    uint8_t memoryIndex = 0, memoryType = 0;
-    uint64_t memorySize = 0;
-    const kern_return_t barKr = ivars->pci->GetBARInfo(bar, &memoryIndex, &memorySize, &memoryType);
+  for (std::uint8_t bar = 0; bar < 6; ++bar) {
+    std::uint8_t memoryIndex = 0, memoryType = 0;
+    std::uint64_t memorySize = 0;
+    const kern_return_t barKr =
+        ivars->pci->GetBARInfo(bar, &memoryIndex, &memorySize, &memoryType);
     if (barKr == kIOReturnSuccess) {
       os_log(OS_LOG_DEFAULT,
              "rtxmac: BAR%u index=%u size=0x%llx type=%u",
@@ -432,9 +171,11 @@ kern_return_t RTXMacDriver::Start_Impl(IOService* provider) {
     }
   }
 
-  // Prototype 1 is intentionally read-only. DMA allocation/preparation/page
-  // enumeration/host-fill helpers are compiled but are not invoked from Start.
-  // No config writes, MMIO writes, resets, firmware loading, or GSP boot occur.
+  // Prototype 1 remains intentionally read-only. Reusable DMA preparation,
+  // PRAMIN transactions, reset recovery, Falcon execution, and single-step GSP
+  // phase execution are compiled in separate cold modules but are never called
+  // from Start_Impl. No config writes, MMIO writes, resets, firmware loading, or
+  // GSP boot occur merely because the DriverKit extension attaches.
   LogDiagnosticSnapshot(this, ivars->pci);
 
   RegisterService();
