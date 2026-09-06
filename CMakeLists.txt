@@ -26,9 +26,11 @@ add_library(rtxmac_core STATIC
     src/core/boot_preflight.cpp
     src/core/boot_sequence_policy.cpp
     src/core/boot_orchestrator.cpp
+    src/core/boot_package.cpp
     src/core/reset_recovery.cpp
     src/core/reset_postcheck.cpp
     src/core/elf.cpp
+    src/core/sha256.cpp
     src/core/nvfw.cpp
     src/core/vbios.cpp
     src/core/frts.cpp
@@ -136,6 +138,10 @@ if(BUILD_TESTING)
   target_link_libraries(rtxmac-boot-orchestrator-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-gsp-boot-orchestrator COMMAND rtxmac-boot-orchestrator-tests)
 
+  add_executable(rtxmac-boot-package-tests tests/test_boot_package.cpp)
+  target_link_libraries(rtxmac-boot-package-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-validated-boot-package COMMAND rtxmac-boot-package-tests)
+
   add_executable(rtxmac-reset-recovery-tests tests/test_reset_recovery.cpp)
   target_link_libraries(rtxmac-reset-recovery-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-pci-gpu-reset-recovery COMMAND rtxmac-reset-recovery-tests)
@@ -147,6 +153,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-elf-tests tests/test_elf.cpp)
   target_link_libraries(rtxmac-elf-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-elf-sections COMMAND rtxmac-elf-tests)
+
+  add_executable(rtxmac-sha256-tests tests/test_sha256.cpp)
+  target_link_libraries(rtxmac-sha256-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-sha256 COMMAND rtxmac-sha256-tests)
 
   add_executable(rtxmac-nvfw-tests tests/test_nvfw.cpp)
   target_link_libraries(rtxmac-nvfw-tests PRIVATE rtxmac_core)
