@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+#include <utility>
 
 namespace {
 using namespace rtxmac::nvidia;
@@ -11,6 +12,7 @@ using namespace rtxmac::nvidia::gsp;
 struct Fixture {
   BootManifest manifest;
   BootSequence sequence;
+  BootSequencePolicyExpectations expectations;
   BootCommitPrerequisites preflight;
 };
 
@@ -67,7 +69,11 @@ Fixture MakeFixture() {
   auto sequence = PlanBootSequence(
       manifest, addresses, gspBootloader, fwsec, sec2, 0x174u);
   assert(sequence.valid);
-  assert(CheckGa102BootSequencePolicy(manifest, sequence).valid);
+  const BootSequencePolicyExpectations expectations{
+      .libosInitArguments = addresses.libosInitArguments,
+      .gspAppVersion = gspBootloader.descriptor.appVersion,
+  };
+  assert(CheckGa102BootSequencePolicy(manifest, sequence, expectations).valid);
 
   BootCommitPrerequisites preflight{
       .executionGateEnabled = true,
@@ -83,7 +89,7 @@ Fixture MakeFixture() {
       .wpr2AddrHi = 0u,
   };
   assert(CheckBootCommitPreflight(preflight).ready);
-  return {std::move(manifest), std::move(sequence), preflight};
+  return {std::move(manifest), std::move(sequence), expectations, preflight};
 }
 }
 
@@ -93,11 +99,20 @@ int main() {
 
   auto rejectedPrereq = fx.preflight;
   rejectedPrereq.executionGateEnabled = false;
-  auto rejected = BeginBootAttempt(fx.manifest, fx.sequence, rejectedPrereq);
+  auto rejected = BeginBootAttempt(
+      fx.manifest, fx.sequence, fx.expectations, rejectedPrereq);
   assert(rejected.state == BootAttemptState::Rejected);
   assert(BootAttemptTerminal(rejected));
 
-  auto coldFailure = BeginBootAttempt(fx.manifest, fx.sequence, fx.preflight);
+  auto wrongExpectations = fx.expectations;
+  wrongExpectations.gspAppVersion ^= 1u;
+  auto rejectedDynamic = BeginBootAttempt(
+      fx.manifest, fx.sequence, wrongExpectations, fx.preflight);
+  assert(rejectedDynamic.state == BootAttemptState::Rejected);
+  assert(!rejectedDynamic.sequencePolicy.valid);
+
+  auto coldFailure = BeginBootAttempt(
+      fx.manifest, fx.sequence, fx.expectations, fx.preflight);
   assert(coldFailure.state == BootAttemptState::Ready);
   assert(RecordBootPhaseResult(coldFailure, fx.sequence, 1u, true, true) ==
          BootAttemptEventStatus::WrongPhase);
@@ -112,7 +127,8 @@ int main() {
   assert(RecordBootPhaseResult(coldFailure, fx.sequence, 1u, true, true) ==
          BootAttemptEventStatus::NotRunnable);
 
-  auto committedFailure = BeginBootAttempt(fx.manifest, fx.sequence, fx.preflight);
+  auto committedFailure = BeginBootAttempt(
+      fx.manifest, fx.sequence, fx.expectations, fx.preflight);
   assert(RecordBootPhaseResult(committedFailure, fx.sequence, 0u, true, false) ==
          BootAttemptEventStatus::Ok);
   assert(RecordBootPhaseResult(committedFailure, fx.sequence, 1u, false, true) ==
@@ -132,7 +148,8 @@ int main() {
   assert(committedFailure.state == BootAttemptState::ResetRecovered);
   assert(BootAttemptTerminal(committedFailure));
 
-  auto unrecoveredFailure = BeginBootAttempt(fx.manifest, fx.sequence, fx.preflight);
+  auto unrecoveredFailure = BeginBootAttempt(
+      fx.manifest, fx.sequence, fx.expectations, fx.preflight);
   assert(RecordBootPhaseResult(unrecoveredFailure, fx.sequence, 0u, true, false) ==
          BootAttemptEventStatus::Ok);
   assert(RecordBootPhaseResult(unrecoveredFailure, fx.sequence, 1u, false, true) ==
@@ -143,7 +160,8 @@ int main() {
          BootAttemptEventStatus::Ok);
   assert(unrecoveredFailure.state == BootAttemptState::Unrecovered);
 
-  auto complete = BeginBootAttempt(fx.manifest, fx.sequence, fx.preflight);
+  auto complete = BeginBootAttempt(
+      fx.manifest, fx.sequence, fx.expectations, fx.preflight);
   for (std::size_t i = 0; i < fx.sequence.phases.size(); ++i) {
     const bool actions = !fx.sequence.phases[i].actions.empty();
     assert(RecordBootPhaseResult(complete, fx.sequence, i, true, actions) ==
