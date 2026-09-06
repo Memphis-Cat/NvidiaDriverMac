@@ -5,10 +5,11 @@ namespace rtxmac::nvidia::gsp {
 BootAttempt BeginBootAttempt(
     const BootManifest& manifest,
     const BootSequence& sequence,
+    const BootSequencePolicyExpectations& expectations,
     const BootCommitPrerequisites& prerequisites) noexcept {
   BootAttempt out{};
   out.preflight = CheckBootCommitPreflight(prerequisites);
-  out.sequencePolicy = CheckGa102BootSequencePolicy(manifest, sequence);
+  out.sequencePolicy = CheckGa102BootSequencePolicy(manifest, sequence, expectations);
   if (!out.preflight.ready || !out.sequencePolicy.valid) {
     out.state = BootAttemptState::Rejected;
     return out;
@@ -48,9 +49,6 @@ BootAttemptEventStatus RecordBootPhaseResult(
   if (!succeeded) {
     attempt.recovery = RecoveryForBootFailure(phase.phase, hardwareActionsStarted);
     if (attempt.firstResetCommitCrossed && !attempt.recovery.fullGpuResetRequired) {
-      // Defensive consistency rule: once the first reset started, no later
-      // failure may be treated as cold-reversible even if a caller supplied an
-      // inconsistent event stream.
       attempt.recovery = RecoveryForBootFailure(BootPhase::ResetGspForFrts, true);
     }
     attempt.state = attempt.recovery.fullGpuResetRequired
