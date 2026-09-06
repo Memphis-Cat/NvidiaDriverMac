@@ -20,6 +20,7 @@ constexpr std::uint32_t kCpuCtlAliasEnableMask = 1u << 6u;
 constexpr std::array kWriteRules{
     RegisterRule{0x03C0u, 0x00000001u}, // engine reset
     RegisterRule{0x1668u, 0x00000111u}, // RISC-V BCR control
+    RegisterRule{0x0080u, 0xFFFFFFFFu}, // FALCON_OS / GSP appVersion
     RegisterRule{0x0084u, 0xFFFFFFFFu}, // Falcon RM/chip id
     RegisterRule{0x0624u, 0x00000080u}, // FBIF allow physical/no context
     RegisterRule{0x010Cu, 0x00000007u}, // DMA control
