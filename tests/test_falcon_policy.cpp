@@ -46,7 +46,6 @@ int main() {
   }
   assert(foundStart);
 
-  // CPUCTL.alias_en clear -> set CPUCTL.startcpu bit 1 at +0x100.
   const auto directStart = ResolveGa102StartCpuAction(deferredStart, 0u);
   assert(directStart.valid && !directStart.usedAlias);
   assert(directStart.action.kind == ActionKind::MaskedWrite);
@@ -54,7 +53,6 @@ int main() {
   assert(directStart.action.value == 0x2u && directStart.action.mask == 0x2u);
   assert(CheckGa102ActionPolicy(directStart.action) == ActionPolicyDecision::Allowed);
 
-  // CPUCTL.alias_en bit 6 set -> write 0x2 to CPUCTL_ALIAS at +0x130.
   const auto aliasStart = ResolveGa102StartCpuAction(deferredStart, 1u << 6u);
   assert(aliasStart.valid && aliasStart.usedAlias);
   assert(aliasStart.action.kind == ActionKind::Write32);
@@ -62,7 +60,13 @@ int main() {
   assert(aliasStart.action.value == 0x2u && aliasStart.action.mask == 0x2u);
   assert(CheckGa102ActionPolicy(aliasStart.action) == ActionPolicyDecision::Allowed);
 
-  // A plan cannot authorize a new BAR0 register merely by placing it in Action.
+  // NVIDIA programs FALCON_OS with the parsed RISC-V appVersion. The register
+  // is allowed, but the value must still come from the boot descriptor rather
+  // than a hardcoded sequence constant.
+  Action falconOs{ActionKind::Write32,
+      EngineBase(Engine::Gsp) + 0x80u, 0x12345678u, 0xFFFFFFFFu, 0u};
+  assert(CheckGa102ActionPolicy(falconOs) == ActionPolicyDecision::Allowed);
+
   auto unknown = resetGsp;
   unknown.actions.insert(unknown.actions.begin(),
       {ActionKind::Write32, EngineBase(Engine::Gsp) + 0x500u,
@@ -72,19 +76,14 @@ int main() {
   assert(unknownReport.firstDeniedIndex == 0u);
   assert(unknownReport.firstDenied == ActionPolicyDecision::DeniedUnknownAddress);
 
-  // Nor may a known register use bits outside its independent policy mask.
   Action resetBadMask{ActionKind::MaskedWrite,
       EngineBase(Engine::Gsp) + 0x3C0u, 2u, 2u, 0u};
   assert(CheckGa102ActionPolicy(resetBadMask) == ActionPolicyDecision::DeniedMask);
 
-  // Poll timeouts are bounded; a plan cannot request an effectively unbounded
-  // live hardware wait.
   Action longPoll{ActionKind::PollMaskEqual,
       EngineBase(Engine::Gsp) + 0x118u, 0u, 1u, 60001u};
   assert(CheckGa102ActionPolicy(longPoll) == ActionPolicyDecision::DeniedTimeout);
 
-  // Unbalanced conditional control flow is rejected even if individual actions
-  // target allowed registers.
   Plan unbalanced{true, {{ActionKind::EndIf, 0u, 0u, 0u, 0u}}};
   assert(!CheckGa102PlanPolicy(unbalanced).valid);
 
