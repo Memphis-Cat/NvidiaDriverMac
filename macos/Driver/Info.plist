@@ -24,6 +24,17 @@
       <string>RTXMacDriver</string>
       <key>IOUserServerName</key>
       <string>com.memphiscat.RTXMacHost.RTXMac</string>
+      <key>UserClientProperties</key>
+      <dict>
+        <key>IOClass</key>
+        <string>IOUserUserClient</string>
+        <key>IOServiceDEXTEntitlements</key>
+        <array>
+          <string>com.apple.developer.driverkit.userclient-access</string>
+        </array>
+        <key>IOUserClass</key>
+        <string>RTXMacUserClient</string>
+      </dict>
     </dict>
   </dict>
 </dict>
