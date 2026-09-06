@@ -13,6 +13,9 @@ struct RegisterRule {
 constexpr std::uint32_t kGspBase = 0x00110000u;
 constexpr std::uint32_t kSec2Base = 0x00840000u;
 constexpr std::uint32_t kCpuCtl = 0x100u;
+constexpr std::uint32_t kCpuCtlAlias = 0x130u;
+constexpr std::uint32_t kCpuCtlStartMask = 1u << 1u;
+constexpr std::uint32_t kCpuCtlAliasEnableMask = 1u << 6u;
 
 constexpr std::array kWriteRules{
     RegisterRule{0x03C0u, 0x00000001u}, // engine reset
@@ -33,13 +36,15 @@ constexpr std::array kWriteRules{
     RegisterRule{0x0104u, 0xFFFFFFFFu}, // boot vector
     RegisterRule{0x0040u, 0xFFFFFFFFu}, // mailbox 0
     RegisterRule{0x0044u, 0xFFFFFFFFu}, // mailbox 1
+    RegisterRule{kCpuCtl, kCpuCtlStartMask}, // CPUCTL.startcpu
+    RegisterRule{kCpuCtlAlias, kCpuCtlStartMask}, // CPUCTL_ALIAS.startcpu
 };
 
 constexpr std::array kReadRules{
     RegisterRule{0x00F4u, (1u << 10u) | (1u << 12u)}, // HWCFG2 riscv/scrubbing
     RegisterRule{0x0118u, (1u << 0u) | (1u << 1u)},   // DMA full/idle
     RegisterRule{0x1668u, 0x00000111u},               // RISC-V BCR
-    RegisterRule{0x0100u, 0xFFFFFFFFu},               // CPUCTL, alias/start/halted
+    RegisterRule{kCpuCtl, 0xFFFFFFFFu},                // CPUCTL, alias/start/halted
 };
 
 bool DecodeEngineAddress(std::uint32_t address,
@@ -130,6 +135,26 @@ ActionPolicyDecision CheckGa102ActionPolicy(const Action& action) noexcept {
           : ActionPolicyDecision::DeniedControlFlow;
   }
   return ActionPolicyDecision::DeniedControlFlow;
+}
+
+ResolvedStartCpuAction ResolveGa102StartCpuAction(
+    const Action& action,
+    std::uint32_t cpuCtlValue) noexcept {
+  ResolvedStartCpuAction out{};
+  if (CheckGa102ActionPolicy(action) != ActionPolicyDecision::RequiresStartCpuAliasSupport) {
+    return out;
+  }
+
+  const bool alias = (cpuCtlValue & kCpuCtlAliasEnableMask) != 0u;
+  const std::uint32_t base = action.address - kCpuCtl;
+  out.usedAlias = alias;
+  out.action = alias
+      ? Action{ActionKind::Write32, base + kCpuCtlAlias,
+               kCpuCtlStartMask, kCpuCtlStartMask, 0u}
+      : Action{ActionKind::MaskedWrite, base + kCpuCtl,
+               kCpuCtlStartMask, kCpuCtlStartMask, 0u};
+  out.valid = CheckGa102ActionPolicy(out.action) == ActionPolicyDecision::Allowed;
+  return out;
 }
 
 PlanPolicyReport CheckGa102PlanPolicy(const Plan& plan) noexcept {
