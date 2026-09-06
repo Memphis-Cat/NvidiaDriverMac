@@ -92,6 +92,31 @@ int main() {
     .sec2BooterImage = 0x1F0100000ull,
   };
 
+  // FRTS/SEC2 source images are GPU VRAM offsets. They must remain below the
+  // GSP reserved/WPR tail and must not overlap one another.
+  const auto fbStage = PlanFramebufferStaging(m, a);
+  assert(fbStage.valid && fbStage.images.size() == 2u);
+  assert(fbStage.images[0].kind == AllocationKind::FrtsFwsecImage);
+  assert(fbStage.images[0].vramOffset == a.frtsFwsecImage);
+  assert(fbStage.images[0].allocationBytes == 0x20000ull);
+  assert(fbStage.images[0].pramin.valid);
+  assert(fbStage.images[1].kind == AllocationKind::Sec2BooterImage);
+  assert(fbStage.images[1].vramOffset == a.sec2BooterImage);
+  assert(fbStage.images[1].allocationBytes == 0x10000ull);
+  assert(fbStage.images[1].pramin.valid);
+
+  auto overlappingFb = a;
+  overlappingFb.sec2BooterImage = overlappingFb.frtsFwsecImage + 0x1000ull;
+  assert(!PlanFramebufferStaging(m, overlappingFb).valid);
+
+  auto inReservedTail = a;
+  inReservedTail.frtsFwsecImage = m.wpr.gspFwRsvdStart;
+  assert(!PlanFramebufferStaging(m, inReservedTail).valid);
+
+  auto unalignedFb = a;
+  unalignedFb.sec2BooterImage += 1u;
+  assert(!PlanFramebufferStaging(m, unalignedFb).valid);
+
   std::vector<std::uint64_t> queuePages;
   queuePages.reserve(static_cast<std::size_t>(m.queues.pageTableEntryCount));
   for(std::uint64_t i=0;i<m.queues.pageTableEntryCount;++i)
