@@ -14,6 +14,7 @@ add_library(rtxmac_core STATIC
     src/core/dma.cpp
     src/core/dma_plan.cpp
     src/core/pramin.cpp
+    src/core/sysmem_flush.cpp
     src/core/gsp_rpc.cpp
     src/core/gsp_boot.cpp
     src/core/gsp_bootstrap.cpp
@@ -76,6 +77,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-pramin-tests tests/test_pramin.cpp)
   target_link_libraries(rtxmac-pramin-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-ga102-pramin-staging COMMAND rtxmac-pramin-tests)
+
+  add_executable(rtxmac-sysmem-flush-tests tests/test_sysmem_flush.cpp)
+  target_link_libraries(rtxmac-sysmem-flush-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-ga102-sysmem-flush-page COMMAND rtxmac-sysmem-flush-tests)
 
   add_executable(rtxmac-framebuffer-stage-tests tests/test_framebuffer_stage.cpp)
   target_link_libraries(rtxmac-framebuffer-stage-tests PRIVATE rtxmac_core)
