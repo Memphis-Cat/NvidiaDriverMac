@@ -46,9 +46,18 @@ void RTXMacReleasePreparedDmaBuffer(RTXMacPreparedDmaBuffer* prepared) noexcept;
 
 // Copy host bytes into the original IOBufferMemoryDescriptor, then explicitly
 // propagate each prepared subrange into the active DMA mapping with
-// PerformOperation(Write). This is safe even if the mapping is not identical to
-// the CPU-visible storage.
+// PerformOperation(Write). This exact-size form requires sourceBytes == length.
 [[nodiscard]] kern_return_t RTXMacCopyIntoPreparedDmaBuffer(
+    const RTXMacPreparedDmaBuffer* prepared,
+    const void* source,
+    std::uint64_t sourceBytes) noexcept;
+
+// Populate a page-aligned DMA allocation from a shorter logical payload. The
+// complete CPU-visible allocation is zeroed first, sourceBytes are copied at
+// offset zero, and every prepared DMA chunk is synchronized for device reads.
+// This is intended for firmware/package sections whose logical size is not a
+// multiple of 4 KiB. No GPU MMIO or execution is performed.
+[[nodiscard]] kern_return_t RTXMacCopyIntoPreparedDmaBufferPadded(
     const RTXMacPreparedDmaBuffer* prepared,
     const void* source,
     std::uint64_t sourceBytes) noexcept;
