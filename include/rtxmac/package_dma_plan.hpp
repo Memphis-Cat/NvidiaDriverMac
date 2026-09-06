@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 
 namespace rtxmac::nvidia::package {
 
@@ -45,6 +46,13 @@ struct DmaStagingPlan {
 // Other raw package sections may be represented by validated page lists.
 [[nodiscard]] DmaStagingPlan PlanPackageDmaStaging(
     const PackageView& view) noexcept;
+
+// Validate a physical DMA page list as one contiguous 4 KiB range. Every page
+// must be page-aligned and exactly one page after its predecessor. The overflow
+// guard prevents a wrapped final address from being accepted as contiguous.
+[[nodiscard]] bool IsLinearDmaPageList(
+    std::span<const std::uint64_t> pageAddresses,
+    std::uint64_t pageBytes = kPackageDmaPageBytes) noexcept;
 
 [[nodiscard]] const char* DmaStagingPlanStatusName(
     DmaStagingPlanStatus status) noexcept;
