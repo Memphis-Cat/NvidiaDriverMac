@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rtxmac/dma.hpp"
 #include "rtxmac/falcon_plan.hpp"
 #include "rtxmac/gsp_boot.hpp"
 #include "rtxmac/gsp_bootstrap.hpp"
@@ -41,6 +42,23 @@ struct AllocationRequirement {
   bool requiresDmaMapping{};
   DmaLayoutRequirement dmaLayout{DmaLayoutRequirement::None};
 };
+
+struct ResolvedDmaAllocation {
+  AllocationKind kind{};
+  DmaLayoutRequirement layout{DmaLayoutRequirement::None};
+  std::uint64_t baseAddress{};
+  std::uint64_t allocationBytes{};
+  std::vector<std::uint64_t> pageAddresses;
+};
+
+// Apply the manifest's DMA-layout contract to one DriverKit-style scatter list.
+// Linear allocations must resolve to one adjacent GPU IOVA range. PageList
+// allocations may be fragmented but every returned logical page must be 4K
+// aligned and exactly cover allocationBytes. Framebuffer/non-DMA entries are
+// intentionally rejected because they are resolved through BAR/VRAM handling.
+[[nodiscard]] std::optional<ResolvedDmaAllocation> ResolveSystemDmaAllocation(
+    const AllocationRequirement& requirement,
+    std::span<const rtxmac::DmaSegment> segments) noexcept;
 
 struct ManifestInputs {
   std::uint64_t fbSize{}; std::uint64_t vgaWorkspaceOffset{}; std::uint64_t vbiosReservedOffset{}; std::uint64_t wprEndMargin{};
