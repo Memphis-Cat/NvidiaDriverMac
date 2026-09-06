@@ -7,6 +7,7 @@
 #include "rtxmac/gsp_metadata.hpp"
 #include "rtxmac/gsp_radix3.hpp"
 #include "rtxmac/nvfw.hpp"
+#include "rtxmac/pramin.hpp"
 #include "rtxmac/vbios.hpp"
 
 #include <array>
@@ -72,8 +73,31 @@ struct BootManifest { bool valid{}; ManifestInputs inputs{}; QueueMemoryLayout q
 struct ResolvedAddresses {
   std::uint64_t queueBacking{}; std::uint64_t cachedArguments{}; std::uint64_t libosInitArguments{}; std::uint64_t wprMetadata{};
   std::uint64_t radix3FirmwareRoot{}; std::uint64_t firmwareSignature{}; std::uint64_t gspBootloader{};
+  // These two fields are GPU framebuffer offsets, not CPU BAR1 addresses.
   std::uint64_t frtsFwsecImage{}; std::uint64_t sec2BooterImage{};
 };
+
+struct FramebufferStageImage {
+  AllocationKind kind{};
+  std::uint64_t vramOffset{};
+  std::uint64_t logicalBytes{};
+  std::uint64_t allocationBytes{};
+  rtxmac::nvidia::PraminStagePlan pramin;
+};
+
+struct FramebufferStagingPlan {
+  bool valid{};
+  std::vector<FramebufferStageImage> images;
+};
+
+// Plan CPU->VRAM staging for the temporary FRTS FWSEC and SEC2 booter source
+// images. They must be page-aligned, non-overlapping, fully inside framebuffer
+// memory and entirely below gspFwRsvdStart, so they cannot overwrite the GSP
+// reserved/WPR/VBIOS tail. The returned PRAMIN subplans are still offline-only.
+[[nodiscard]] FramebufferStagingPlan PlanFramebufferStaging(
+    const BootManifest& manifest,
+    const ResolvedAddresses& addresses) noexcept;
+
 struct ResolvedArtifacts {
   std::array<std::uint8_t, kGspArgumentsCachedBytes> cachedArguments{};
   std::array<std::uint8_t, kWprMetaBytes> wprMetadata{};
