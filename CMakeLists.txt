@@ -24,6 +24,7 @@ add_library(rtxmac_core STATIC
     src/core/framebuffer_stage.cpp
     src/core/boot_recovery.cpp
     src/core/boot_preflight.cpp
+    src/core/boot_sequence_policy.cpp
     src/core/reset_recovery.cpp
     src/core/reset_postcheck.cpp
     src/core/elf.cpp
@@ -125,6 +126,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-boot-preflight-tests tests/test_boot_preflight.cpp)
   target_link_libraries(rtxmac-boot-preflight-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-gsp-boot-preflight COMMAND rtxmac-boot-preflight-tests)
+
+  add_executable(rtxmac-boot-sequence-policy-tests tests/test_boot_sequence_policy.cpp)
+  target_link_libraries(rtxmac-boot-sequence-policy-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-gsp-boot-sequence-policy COMMAND rtxmac-boot-sequence-policy-tests)
 
   add_executable(rtxmac-reset-recovery-tests tests/test_reset_recovery.cpp)
   target_link_libraries(rtxmac-reset-recovery-tests PRIVATE rtxmac_core)
