@@ -25,6 +25,7 @@ targets:
         excludes:
           - README.md
       - path: src/core/sysmem_flush.cpp
+      - path: src/core/falcon_policy.cpp
     dependencies:
       - sdk: DriverKit.framework
       - sdk: PCIDriverKit.framework
