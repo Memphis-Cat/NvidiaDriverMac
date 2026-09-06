@@ -41,9 +41,6 @@ bool MakeFramebufferStageImage(const BootManifest& manifest,
   }
   const std::uint64_t end = vramOffset + requirement->allocationBytes;
 
-  // Temporary source images must not occupy NVIDIA's GSP reserved/WPR/VBIOS
-  // tail. Falcon DMA reads them from framebuffer memory before that tail is
-  // used for the protected runtime layout.
   if (end > manifest.wpr.gspFwRsvdStart) return false;
 
   auto pramin = rtxmac::nvidia::PlanPraminStage(
@@ -62,7 +59,6 @@ bool MakeFramebufferStageImage(const BootManifest& manifest,
 
 bool RangesOverlap(std::uint64_t aStart, std::uint64_t aBytes,
                    std::uint64_t bStart, std::uint64_t bBytes) noexcept {
-  // Inputs were already proven to fit in framebuffer, so additions are safe.
   const std::uint64_t aEnd = aStart + aBytes;
   const std::uint64_t bEnd = bStart + bBytes;
   return aStart < bEnd && bStart < aEnd;
@@ -95,8 +91,6 @@ std::optional<ResolvedDmaAllocation> ResolveSystemDmaAllocation(
   }
 
   if (requirement.dmaLayout == DmaLayoutRequirement::PageList) {
-    // Current Ampere queue/Radix3 formats use 4 KiB physical pages. Keep this
-    // independent of a larger allocation alignment so the ABI stays explicit.
     const auto pages = rtxmac::ExpandDmaSegmentsToPages(
         segments, requirement.allocationBytes, kPage);
     if (pages.status != rtxmac::DmaPageMapStatus::Ok || pages.pageAddresses.empty() ||
@@ -116,9 +110,6 @@ BootManifest PlanBootManifest(const ManifestInputs& in){
   auto q=PlanQueueMemory(in.queueBytes);auto r=PlanRadix3(in.gspFirmwareImageBytes);auto w=PlanWprLayout({in.fbSize,in.vgaWorkspaceOffset,in.vbiosReservedOffset,in.wprEndMargin,in.frtsSize,in.gspBootloaderBytes,in.gspFirmwareImageBytes,in.nonWprHeapSize,in.requestedWprHeapSize});
   if(!q||!r||!w)return o;o.queues=*q;o.radix3=*r;o.wpr=*w;o.valid=true;o.bootstrapRpcPrefillImplemented=true;
 
-  // Queue backing and the GSP firmware have explicit page indirection and may
-  // be genuinely scattered. Every other system-memory handoff exposes only a
-  // base address plus size and therefore must resolve to one GPU-linear range.
   AddAlloc(o,AllocationKind::QueueBacking,MemoryDomain::System,q->totalBytes,kPage,DmaLayoutRequirement::PageList);
   AddAlloc(o,AllocationKind::CachedArguments,MemoryDomain::System,kGspArgumentsCachedBytes,kPage,DmaLayoutRequirement::Linear);
   AddAlloc(o,AllocationKind::LibosInitArguments,MemoryDomain::System,kLibosInitPageBytes,kPage,DmaLayoutRequirement::Linear);
@@ -177,15 +168,28 @@ std::optional<ResolvedArtifacts> BuildResolvedArtifacts(const BootManifest&m,con
   return o;
 }
 
-BootSequence PlanBootSequence(const BootManifest&m,const ResolvedAddresses&a,const vbios::DescriptorV3& f,const fw::BooterImageInfo& s,std::uint32_t chip){
-  BootSequence o{};if(!m.valid||s.status!=fw::ParseStatus::Ok||!AddressesOk(a)||s.bin.dataSize!=m.inputs.sec2BooterImageBytes||!f.imemLoadSize||!f.dmemLoadSize)return o;
+BootSequence PlanBootSequence(
+    const BootManifest&m,
+    const ResolvedAddresses&a,
+    const fw::RiscvBootloaderInfo& g,
+    const vbios::DescriptorV3& f,
+    const fw::BooterImageInfo& s,
+    std::uint32_t chip){
+  BootSequence o{};
+  if(!m.valid||g.status!=fw::ParseStatus::Ok||s.status!=fw::ParseStatus::Ok||!AddressesOk(a)||
+     g.bin.dataSize!=m.inputs.gspBootloaderBytes||s.bin.dataSize!=m.inputs.sec2BooterImageBytes||
+     !f.imemLoadSize||!f.dmemLoadSize)return o;
   o.phases.push_back({BootPhase::PrefillBootstrapRpcRecords,{},{}});
   PhasePlan p{BootPhase::ResetGspForFrts};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,false,chip));o.phases.push_back(std::move(p));
   auto fx=falcon::PlanAuthenticatedExecution({falcon::Engine::Gsp,a.frtsFwsecImage,0u,f.imemLoadSize,f.imemPhysBase,f.imemVirtBase,f.imemLoadSize,f.dmemPhysBase,0u,f.dmemLoadSize,f.pkcDataOffset,f.engineIdMask,f.ucodeId,std::nullopt});if(!fx.valid)return {};p={BootPhase::ExecuteFrtsFwsec};AppendActions(p,fx);o.phases.push_back(std::move(p));
   o.phases.push_back({BootPhase::VerifyWpr2,{},{{CheckKind::MmioNonZero,kWpr2Hi,0xFFFFFFFFu,0u}}});p={BootPhase::ResetGspForRiscv};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,true,chip));o.phases.push_back(std::move(p));
   o.phases.push_back({BootPhase::ProgramLibosMailbox,{Write32(kGspMailbox0,static_cast<std::uint32_t>(a.libosInitArguments)),Write32(kGspMailbox1,static_cast<std::uint32_t>(a.libosInitArguments>>32u))},{}});p={BootPhase::ResetSec2};AppendActions(p,falcon::PlanReset(falcon::Engine::Sec2,false,chip));o.phases.push_back(std::move(p));
   auto sx=falcon::PlanAuthenticatedExecution({falcon::Engine::Sec2,a.sec2BooterImage,s.firstApp.offset,s.load.osDataOffset,0u,s.firstApp.offset,s.firstApp.size,0u,0u,s.load.osDataSize,0x10u,1u,3u,a.wprMetadata});if(!sx.valid)return {};p={BootPhase::ExecuteSec2Booter};AppendActions(p,sx);o.phases.push_back(std::move(p));
-  o.phases.push_back({BootPhase::VerifySec2Booter,{},{{CheckKind::MmioMaskEqual,kSec2Mailbox0,0xFFFFFFFFu,0u}}});o.phases.push_back({BootPhase::ReleaseGspRiscv,{Write32(kGspFalconOs,0u)},{}});o.phases.push_back({BootPhase::VerifyGspRiscv,{},{{CheckKind::MmioMaskEqual,kGspRiscvCpuCtl,kRiscvActiveMask,kRiscvActiveMask}}});o.phases.push_back({BootPhase::WaitStatusQueue,{},{{CheckKind::SharedMemoryU32Equal,m.queues.statusQueueOffset+kStatusQueueEntryOffField,0xFFFFFFFFu,kExpectedQueueEntryOff}}});o.valid=true;o.executableWithCurrentCore=m.bootstrapRpcPrefillImplemented;return o;
+  o.phases.push_back({BootPhase::VerifySec2Booter,{},{{CheckKind::MmioMaskEqual,kSec2Mailbox0,0xFFFFFFFFu,0u}}});
+  // NVIDIA programs FALCON_OS with RM_RISCV_UCODE_DESC::appVersion after SEC2
+  // resumes GSP-RM; a hardcoded zero changes the boot contract.
+  o.phases.push_back({BootPhase::ReleaseGspRiscv,{Write32(kGspFalconOs,g.descriptor.appVersion)},{}});
+  o.phases.push_back({BootPhase::VerifyGspRiscv,{},{{CheckKind::MmioMaskEqual,kGspRiscvCpuCtl,kRiscvActiveMask,kRiscvActiveMask}}});o.phases.push_back({BootPhase::WaitStatusQueue,{},{{CheckKind::SharedMemoryU32Equal,m.queues.statusQueueOffset+kStatusQueueEntryOffField,0xFFFFFFFFu,kExpectedQueueEntryOff}}});o.valid=true;o.executableWithCurrentCore=m.bootstrapRpcPrefillImplemented;return o;
 }
 
 } // namespace rtxmac::nvidia::gsp
