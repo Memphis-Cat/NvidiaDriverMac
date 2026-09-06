@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rtxmac/write_policy.hpp"
+
 #include <cstdint>
 #include <vector>
 
@@ -14,6 +16,7 @@ inline constexpr std::uint64_t kPraminWindowBytes = 0x100000ull;
 inline constexpr std::uint64_t kPraminWindowMask = kPraminWindowBytes - 1ull;
 inline constexpr std::uint32_t kPraminWindowSelectOffset = 0x001700u;
 inline constexpr std::uint32_t kPraminApertureOffset = 0x700000u;
+inline constexpr std::uint32_t kPraminApertureBytes = 0x100000u;
 
 struct PraminStageChunk {
   // GPU framebuffer/VRAM byte offset represented by the first byte in this chunk.
@@ -45,5 +48,31 @@ struct PraminStagePlan {
     std::uint64_t vramOffset,
     std::uint64_t byteCount,
     std::uint64_t vramSize) noexcept;
+
+enum class PraminMmioStepKind : std::uint8_t {
+  SelectWindow,
+  WriteApertureRegion,
+};
+
+struct PraminMmioStep {
+  PraminMmioStepKind kind{PraminMmioStepKind::SelectWindow};
+  std::uint32_t bar0Offset{};
+  std::uint64_t bytes{};
+  // Used only by SelectWindow. Data-region contents remain external to the
+  // dry-run trace and are never interpreted as register values.
+  std::uint32_t value{};
+  bool allowed{};
+};
+
+struct PraminDryRunMmioPlan {
+  bool valid{};
+  std::vector<PraminMmioStep> steps;
+};
+
+// Convert a staging plan into a policy-checked MMIO trace. The policy grants
+// only the exact PRAMIN selector register and the 1 MiB PRAMIN data aperture.
+// A malformed/tampered staging plan is rejected. No hardware access occurs.
+[[nodiscard]] PraminDryRunMmioPlan BuildPraminDryRunMmioPlan(
+    const PraminStagePlan& stage) noexcept;
 
 } // namespace rtxmac::nvidia
