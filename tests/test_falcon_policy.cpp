@@ -35,6 +35,33 @@ int main() {
   assert(authReport.valid);
   assert(authReport.requiresStartCpuAliasSupport);
 
+  Action deferredStart{};
+  bool foundStart = false;
+  for (const auto& action : authenticated.actions) {
+    if (action.kind == ActionKind::StartCpuRespectAlias) {
+      deferredStart = action;
+      foundStart = true;
+      break;
+    }
+  }
+  assert(foundStart);
+
+  // CPUCTL.alias_en clear -> set CPUCTL.startcpu bit 1 at +0x100.
+  const auto directStart = ResolveGa102StartCpuAction(deferredStart, 0u);
+  assert(directStart.valid && !directStart.usedAlias);
+  assert(directStart.action.kind == ActionKind::MaskedWrite);
+  assert(directStart.action.address == EngineBase(Engine::Gsp) + 0x100u);
+  assert(directStart.action.value == 0x2u && directStart.action.mask == 0x2u);
+  assert(CheckGa102ActionPolicy(directStart.action) == ActionPolicyDecision::Allowed);
+
+  // CPUCTL.alias_en bit 6 set -> write 0x2 to CPUCTL_ALIAS at +0x130.
+  const auto aliasStart = ResolveGa102StartCpuAction(deferredStart, 1u << 6u);
+  assert(aliasStart.valid && aliasStart.usedAlias);
+  assert(aliasStart.action.kind == ActionKind::Write32);
+  assert(aliasStart.action.address == EngineBase(Engine::Gsp) + 0x130u);
+  assert(aliasStart.action.value == 0x2u && aliasStart.action.mask == 0x2u);
+  assert(CheckGa102ActionPolicy(aliasStart.action) == ActionPolicyDecision::Allowed);
+
   // A plan cannot authorize a new BAR0 register merely by placing it in Action.
   auto unknown = resetGsp;
   unknown.actions.insert(unknown.actions.begin(),
