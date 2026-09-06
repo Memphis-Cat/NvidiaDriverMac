@@ -26,6 +26,10 @@ targets:
           - README.md
       - path: src/core/sysmem_flush.cpp
       - path: src/core/falcon_policy.cpp
+      - path: src/core/boot_preflight.cpp
+      - path: src/core/boot_recovery.cpp
+      - path: src/core/boot_sequence_policy.cpp
+      - path: src/core/boot_orchestrator.cpp
     dependencies:
       - sdk: DriverKit.framework
       - sdk: PCIDriverKit.framework
