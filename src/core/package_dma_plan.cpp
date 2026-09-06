@@ -80,6 +80,28 @@ DmaStagingPlan PlanPackageDmaStaging(const PackageView& view) noexcept {
   return out;
 }
 
+bool IsLinearDmaPageList(
+    std::span<const std::uint64_t> pageAddresses,
+    std::uint64_t pageBytes) noexcept {
+  if (pageAddresses.empty() || pageBytes == 0u ||
+      (pageBytes & (pageBytes - 1u)) != 0u) {
+    return false;
+  }
+
+  for (const std::uint64_t address : pageAddresses) {
+    if ((address & (pageBytes - 1u)) != 0u) return false;
+  }
+
+  for (std::size_t i = 1u; i < pageAddresses.size(); ++i) {
+    const std::uint64_t previous = pageAddresses[i - 1u];
+    if (previous > std::numeric_limits<std::uint64_t>::max() - pageBytes ||
+        pageAddresses[i] != previous + pageBytes) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const char* DmaStagingPlanStatusName(DmaStagingPlanStatus status) noexcept {
   switch (status) {
     case DmaStagingPlanStatus::Ok: return "ok";
