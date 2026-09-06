@@ -21,6 +21,19 @@ bool AlignUp(std::uint64_t value,
   return true;
 }
 
+DmaSectionLayout RequiredLayout(SectionKind kind) noexcept {
+  switch (kind) {
+    case SectionKind::GspFirmwareSignature:
+    case SectionKind::GspBootloader:
+      return DmaSectionLayout::Linear;
+    case SectionKind::GspFirmwareImage:
+    case SectionKind::FrtsFwsecImage:
+    case SectionKind::Sec2BooterImage:
+      return DmaSectionLayout::PageList;
+  }
+  return DmaSectionLayout::PageList;
+}
+
 } // namespace
 
 DmaStagingPlan PlanPackageDmaStaging(const PackageView& view) noexcept {
@@ -54,6 +67,7 @@ DmaStagingPlan PlanPackageDmaStaging(const PackageView& view) noexcept {
 
     out.sections[i] = {
         .kind = section.kind,
+        .layout = RequiredLayout(section.kind),
         .logicalBytes = section.size,
         .allocationBytes = allocationBytes,
         .pageCount = allocationBytes / kPackageDmaPageBytes,
