@@ -81,7 +81,9 @@ kern_return_t MakeInputView(IOUserClientMethodArguments* arguments,
 
   IOMemoryDescriptor* descriptor = arguments->structureInputDescriptor;
   if (!descriptor) return kIOReturnBadArgument;
-  const std::uint64_t length = descriptor->GetLength();
+  std::uint64_t length = 0u;
+  const kern_return_t lengthKr = descriptor->GetLength(&length);
+  if (lengthKr != kIOReturnSuccess) return lengthKr;
   if (length == 0u || length > kMaxPackageBytes ||
       length > std::numeric_limits<std::size_t>::max()) {
     return kIOReturnBadArgument;
