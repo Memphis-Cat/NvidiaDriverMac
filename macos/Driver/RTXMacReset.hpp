@@ -25,8 +25,10 @@ struct RTXMacResetExecutionResult {
 // Cold/default-off reset executor. A successful reset is deliberately treated
 // as a terminal point for all pre-reset boot state: the caller must discard DMA
 // mappings/artifacts/plans and reconstruct the boot pipeline from scratch.
+// Hot reset receives a second explicit permission because it is bus-scoped.
 // This function is not called from RTXMacDriver::Start_Impl or the host app.
 [[nodiscard]] RTXMacResetExecutionResult RTXMacExecuteRecoveryReset(
     IOPCIDevice* pci,
     const rtxmac::nvidia::gsp::GpuResetPlan& plan,
-    bool resetsEnabled = false) noexcept;
+    bool resetsEnabled = false,
+    bool hotResetAllowed = false) noexcept;
