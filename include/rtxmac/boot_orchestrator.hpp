@@ -41,18 +41,14 @@ struct BootAttempt {
 };
 
 // Construct a fresh attempt. Both the independent full-sequence policy audit
-// and the final pre-commit software gate must pass before the attempt becomes
-// runnable. This performs no hardware access.
+// (including dynamic libOS/appVersion expectations) and the final pre-commit
+// software gate must pass before the attempt becomes runnable. No hardware I/O.
 [[nodiscard]] BootAttempt BeginBootAttempt(
     const BootManifest& manifest,
     const BootSequence& sequence,
+    const BootSequencePolicyExpectations& expectations,
     const BootCommitPrerequisites& prerequisites) noexcept;
 
-// Record exactly one phase result in strict sequence order. A successful phase
-// containing hardware actions must report hardwareActionsStarted=true; a phase
-// with no actions must report false. Once a failure occurs, no further phase can
-// be recorded on this attempt. The first live ResetGspForFrts action is the
-// commit boundary used by RecoveryForBootFailure().
 [[nodiscard]] BootAttemptEventStatus RecordBootPhaseResult(
     BootAttempt& attempt,
     const BootSequence& sequence,
@@ -60,9 +56,6 @@ struct BootAttempt {
     bool succeeded,
     bool hardwareActionsStarted) noexcept;
 
-// Complete recovery after a failed committed attempt. Even a successful GPU
-// reset does not resume the old attempt: it transitions to ResetRecovered and a
-// brand-new BeginBootAttempt() is required with newly resolved DMA/artifacts.
 [[nodiscard]] BootAttemptEventStatus RecordBootResetPostcheck(
     BootAttempt& attempt,
     const ResetPostcheckReport& postcheck) noexcept;
