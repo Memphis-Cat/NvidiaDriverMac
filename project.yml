@@ -33,7 +33,7 @@ targets:
       - path: src/core/boot_package.cpp
       - path: src/core/boot_package_policy.cpp
       - path: src/core/sha256.cpp
-      - path: src/core/pci_identity.cpp
+      - path: src/core/pci_identity_policy.cpp
       - path: src/core/elf.cpp
       - path: src/core/nvfw.cpp
       - path: src/core/vbios.cpp
