@@ -72,6 +72,10 @@ if(BUILD_TESTING)
   target_link_libraries(rtxmac-pramin-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-ga102-pramin-staging COMMAND rtxmac-pramin-tests)
 
+  add_executable(rtxmac-framebuffer-stage-tests tests/test_framebuffer_stage.cpp)
+  target_link_libraries(rtxmac-framebuffer-stage-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-framebuffer-stage-artifact COMMAND rtxmac-framebuffer-stage-tests)
+
   add_executable(rtxmac-write-policy-tests tests/test_write_policy.cpp)
   target_link_libraries(rtxmac-write-policy-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-write-policy COMMAND rtxmac-write-policy-tests)
