@@ -111,6 +111,80 @@ BooterImageInfo ParseBooterImage(std::span<const std::uint8_t> image) noexcept {
   return out;
 }
 
+BooterPatchResult PatchBooterProductionSignature(
+    std::span<const std::uint8_t> image,
+    const BooterImageInfo& info) noexcept {
+  BooterPatchResult out{};
+  if (info.status != ParseStatus::Ok ||
+      info.bin.binSize > image.size() ||
+      !RangeFits(info.bin.binSize, info.bin.dataOffset, info.bin.dataSize) ||
+      !RangeFits(info.bin.binSize, info.hs.sigProdOffset, info.hs.sigProdSize) ||
+      !RangeFits(info.bin.binSize, info.hs.patchLoc, sizeof(std::uint32_t)) ||
+      !RangeFits(info.bin.binSize, info.hs.patchSig, sizeof(std::uint32_t))) {
+    return out;
+  }
+
+  if (!RangeFits(info.bin.binSize, info.hs.numSig, sizeof(std::uint32_t))) {
+    out.status = BooterPatchStatus::NumSignaturesPointerOutOfRange;
+    return out;
+  }
+  const std::uint32_t signatureCount = LoadLe32(image, info.hs.numSig);
+  out.signatureCount = signatureCount;
+  if (signatureCount == 0u) {
+    out.status = BooterPatchStatus::ZeroSignatures;
+    return out;
+  }
+  if (info.hs.sigProdSize == 0u || (info.hs.sigProdSize % signatureCount) != 0u) {
+    out.status = BooterPatchStatus::InvalidSignatureTable;
+    return out;
+  }
+
+  const std::uint32_t signatureBytes = info.hs.sigProdSize / signatureCount;
+  const std::uint32_t patchOffset = LoadLe32(image, info.hs.patchLoc);
+  const std::uint32_t selectedSignatureOffset = LoadLe32(image, info.hs.patchSig);
+  out.signatureBytes = signatureBytes;
+  out.patchOffset = patchOffset;
+  out.selectedSignatureOffset = selectedSignatureOffset;
+
+  if (selectedSignatureOffset > info.hs.sigProdSize ||
+      signatureBytes > info.hs.sigProdSize - selectedSignatureOffset) {
+    out.status = BooterPatchStatus::SignatureSelectionOutOfRange;
+    return out;
+  }
+  if (patchOffset > info.bin.dataSize || signatureBytes > info.bin.dataSize - patchOffset) {
+    out.status = BooterPatchStatus::PatchTargetOutOfRange;
+    return out;
+  }
+
+  const std::uint64_t signatureSource =
+      static_cast<std::uint64_t>(info.hs.sigProdOffset) + selectedSignatureOffset;
+  if (!RangeFits(info.bin.binSize, signatureSource, signatureBytes)) {
+    out.status = BooterPatchStatus::SignatureSelectionOutOfRange;
+    return out;
+  }
+
+  out.bytes.assign(image.begin() + info.bin.dataOffset,
+                   image.begin() + info.bin.dataOffset + info.bin.dataSize);
+  for (std::uint32_t i = 0u; i < signatureBytes; ++i) {
+    out.bytes[patchOffset + i] = image[static_cast<std::size_t>(signatureSource) + i];
+  }
+  out.status = BooterPatchStatus::Ok;
+  return out;
+}
+
+const char* BooterPatchStatusName(BooterPatchStatus status) noexcept {
+  switch (status) {
+    case BooterPatchStatus::Ok: return "ok";
+    case BooterPatchStatus::InvalidBooter: return "invalid-booter";
+    case BooterPatchStatus::NumSignaturesPointerOutOfRange: return "num-signatures-pointer-out-of-range";
+    case BooterPatchStatus::ZeroSignatures: return "zero-signatures";
+    case BooterPatchStatus::InvalidSignatureTable: return "invalid-signature-table";
+    case BooterPatchStatus::SignatureSelectionOutOfRange: return "signature-selection-out-of-range";
+    case BooterPatchStatus::PatchTargetOutOfRange: return "patch-target-out-of-range";
+  }
+  return "unknown";
+}
+
 RiscvBootloaderInfo ParseRiscvBootloader(std::span<const std::uint8_t> image) noexcept {
   RiscvBootloaderInfo out{};
   if (image.size() < kBinHeaderBytes) return out;
