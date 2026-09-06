@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace rtxmac::nvidia::fw {
 
@@ -38,6 +39,8 @@ struct HsHeaderV2 {
   std::uint32_t patchSig{};
   std::uint32_t metaDataOffset{};
   std::uint32_t metaDataSize{};
+  // Despite the legacy field name, this is an offset to a u32 signature count
+  // in NVIDIA's nvfw HS header, not the count value itself.
   std::uint32_t numSig{};
   std::uint32_t headerOffset{};
   std::uint32_t headerSize{};
@@ -65,6 +68,34 @@ struct BooterImageInfo {
   LoadHeaderV2 load{};
   AppHeaderV2 firstApp{};
 };
+
+enum class BooterPatchStatus : std::uint8_t {
+  Ok = 0,
+  InvalidBooter,
+  NumSignaturesPointerOutOfRange,
+  ZeroSignatures,
+  InvalidSignatureTable,
+  SignatureSelectionOutOfRange,
+  PatchTargetOutOfRange,
+};
+
+struct BooterPatchResult {
+  BooterPatchStatus status{BooterPatchStatus::InvalidBooter};
+  std::uint32_t signatureCount{};
+  std::uint32_t signatureBytes{};
+  std::uint32_t selectedSignatureOffset{};
+  std::uint32_t patchOffset{};
+  std::vector<std::uint8_t> bytes;
+};
+
+// Build the exact authenticated payload staged to VRAM for NVIDIA HS booters.
+// The HS header contains pointers to patch_loc, patch_sig and num_sig values.
+// The selected production signature is copied into a private copy of the
+// [bin.dataOffset, dataOffset+dataSize) payload; the input is never modified.
+[[nodiscard]] BooterPatchResult PatchBooterProductionSignature(
+    std::span<const std::uint8_t> image,
+    const BooterImageInfo& info) noexcept;
+[[nodiscard]] const char* BooterPatchStatusName(BooterPatchStatus status) noexcept;
 
 struct RiscvUcodeDescriptor {
   std::uint32_t version{};
