@@ -26,6 +26,7 @@ add_library(rtxmac_core STATIC
     src/core/vbios.cpp
     src/core/frts.cpp
     src/core/falcon_plan.cpp
+    src/core/falcon_policy.cpp
 )
 target_include_directories(rtxmac_core PUBLIC include)
 
@@ -127,4 +128,8 @@ if(BUILD_TESTING)
   add_executable(rtxmac-falcon-plan-tests tests/test_falcon_plan.cpp)
   target_link_libraries(rtxmac-falcon-plan-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-falcon-dry-run-plan COMMAND rtxmac-falcon-plan-tests)
+
+  add_executable(rtxmac-falcon-policy-tests tests/test_falcon_policy.cpp)
+  target_link_libraries(rtxmac-falcon-policy-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-falcon-static-policy COMMAND rtxmac-falcon-policy-tests)
 endif()
