@@ -44,6 +44,10 @@ if(BUILD_TESTING)
   target_link_libraries(rtxmac-pci-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-pci-identity COMMAND rtxmac-pci-tests)
 
+  add_executable(rtxmac-pci-command-tests tests/test_pci_command.cpp)
+  target_link_libraries(rtxmac-pci-command-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-pci-command-transition COMMAND rtxmac-pci-command-tests)
+
   add_executable(rtxmac-nvidia-tests tests/test_nvidia_boot.cpp)
   target_link_libraries(rtxmac-nvidia-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-nvidia-boot COMMAND rtxmac-nvidia-tests)
