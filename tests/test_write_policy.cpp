@@ -29,6 +29,31 @@ int main() {
   assert(lockedDown.Add(0x100, 0u, 1u) == WriteDecision::DeniedUnknownRegister);
   assert(!lockedDown.AllAllowed());
 
-  std::cout << "rtxmac dry-run MMIO write policy tests passed\n";
+  // PRAMIN-like data apertures are represented as a bounded region. A write
+  // wholly inside the region is accepted; boundary crossing and unaligned
+  // transfers are rejected without creating a BAR-wide exception.
+  constexpr std::array regionRules{
+      MmioWriteRegionRule{.offset = 0x700000u, .length = 0x100000u, .alignment = 4u},
+  };
+  static_assert(CheckMmioRegionWrite(regionRules, 0x700000u, 4u) == RegionWriteDecision::Allowed);
+  static_assert(CheckMmioRegionWrite(regionRules, 0x7FF000u, 0x1000u) == RegionWriteDecision::Allowed);
+  static_assert(CheckMmioRegionWrite(regionRules, 0x7FF000u, 0x1004u) == RegionWriteDecision::DeniedUnknownRange);
+  static_assert(CheckMmioRegionWrite(regionRules, 0x700002u, 4u) == RegionWriteDecision::DeniedUnaligned);
+  static_assert(CheckMmioRegionWrite(regionRules, 0x700000u, 6u) == RegionWriteDecision::DeniedUnaligned);
+  static_assert(CheckMmioRegionWrite(regionRules, 0x700000u, 0u) == RegionWriteDecision::DeniedEmpty);
+
+  DryRunRegionWritePlan regionPlan(regionRules);
+  assert(regionPlan.Add(0x745000u, 0x2000u) == RegionWriteDecision::Allowed);
+  assert(regionPlan.AllAllowed());
+  assert(regionPlan.Add(0x6FF000u, 0x2000u) == RegionWriteDecision::DeniedUnknownRange);
+  assert(!regionPlan.AllAllowed());
+  assert(regionPlan.Writes().size() == 2u);
+
+  constexpr std::array<MmioWriteRegionRule, 0> emptyRegionRules{};
+  DryRunRegionWritePlan lockedRegion(emptyRegionRules);
+  assert(lockedRegion.Add(0x700000u, 4u) == RegionWriteDecision::DeniedUnknownRange);
+  assert(!lockedRegion.AllAllowed());
+
+  std::cout << "rtxmac dry-run MMIO register/region write policy tests passed\n";
   return 0;
 }
