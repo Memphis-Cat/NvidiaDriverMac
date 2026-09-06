@@ -90,15 +90,9 @@ struct FramebufferStageArtifact {
   std::uint64_t logicalBytes{};
   std::uint64_t allocationBytes{};
   rtxmac::nvidia::PraminStagePlan pramin;
-  // Exact PRAMIN transfer image. The logical firmware occupies the prefix and
-  // every byte in [logicalBytes, allocationBytes) is guaranteed zero.
   std::vector<std::uint8_t> bytes;
 };
 
-// Bind exact firmware bytes to one planned framebuffer staging destination.
-// Input length must equal logicalBytes. Output length is allocationBytes and
-// page/dword padding is deterministic zero, preventing stale host memory from
-// being copied into VRAM.
 [[nodiscard]] std::optional<FramebufferStageArtifact> BuildFramebufferStageArtifact(
     const FramebufferStageImage& plan,
     std::span<const std::uint8_t> firmware) noexcept;
@@ -124,7 +118,16 @@ struct Check { CheckKind kind{}; std::uint64_t addressOrOffset{}; std::uint32_t 
 enum class BootPhase : std::uint8_t { PrefillBootstrapRpcRecords, ResetGspForFrts, ExecuteFrtsFwsec, VerifyWpr2, ResetGspForRiscv, ProgramLibosMailbox, ResetSec2, ExecuteSec2Booter, VerifySec2Booter, ReleaseGspRiscv, VerifyGspRiscv, WaitStatusQueue };
 struct PhasePlan { BootPhase phase{}; std::vector<falcon::Action> actions; std::vector<Check> checks; };
 struct BootSequence { bool valid{}; bool executableWithCurrentCore{}; std::vector<PhasePlan> phases; };
-[[nodiscard]] BootSequence PlanBootSequence(const BootManifest& manifest, const ResolvedAddresses& addresses,
-    const vbios::DescriptorV3& fwsec, const fw::BooterImageInfo& sec2Booter, std::uint32_t chipId);
+
+// The parsed GSP RISC-V descriptor is part of the live boot sequence, not only
+// artifact construction: NVIDIA programs FALCON_OS with descriptor.appVersion
+// after SEC2 resumes GSP-RM and before checking that RISC-V is active.
+[[nodiscard]] BootSequence PlanBootSequence(
+    const BootManifest& manifest,
+    const ResolvedAddresses& addresses,
+    const fw::RiscvBootloaderInfo& gspBootloader,
+    const vbios::DescriptorV3& fwsec,
+    const fw::BooterImageInfo& sec2Booter,
+    std::uint32_t chipId);
 
 } // namespace rtxmac::nvidia::gsp
