@@ -46,6 +46,40 @@ int main() {
   assert(!m.allocations[7].requiresDmaMapping && m.allocations[7].dmaLayout == DmaLayoutRequirement::None);
   assert(!m.allocations[8].requiresDmaMapping && m.allocations[8].dmaLayout == DmaLayoutRequirement::None);
 
+  // Page-list allocations may be genuinely fragmented as long as each page is
+  // representable and the total mapping exactly covers the allocation.
+  const std::vector<rtxmac::DmaSegment> queueSegments{
+    {0x10000000ull, 0x20000ull},
+    {0x30000000ull, 0x61000ull},
+  };
+  const auto queueDma = ResolveSystemDmaAllocation(m.allocations[0], queueSegments);
+  assert(queueDma);
+  assert(queueDma->layout == DmaLayoutRequirement::PageList);
+  assert(queueDma->baseAddress == 0x10000000ull);
+  assert(queueDma->pageAddresses.size() == 129u);
+  assert(queueDma->pageAddresses[31] == 0x1001F000ull);
+  assert(queueDma->pageAddresses[32] == 0x30000000ull);
+
+  // Linear boot data may be split into multiple descriptors only when the GPU
+  // IOVA ranges are adjacent and therefore still form one base+size range.
+  const std::vector<rtxmac::DmaSegment> linearBootloader{
+    {0x14100000ull, 0x8000ull},
+    {0x14108000ull, 0x10000ull},
+  };
+  const auto bootloaderDma = ResolveSystemDmaAllocation(m.allocations[6], linearBootloader);
+  assert(bootloaderDma);
+  assert(bootloaderDma->layout == DmaLayoutRequirement::Linear);
+  assert(bootloaderDma->baseAddress == 0x14100000ull);
+  assert(bootloaderDma->allocationBytes == 0x18000ull);
+  assert(bootloaderDma->pageAddresses.empty());
+
+  const std::vector<rtxmac::DmaSegment> fragmentedBootloader{
+    {0x14100000ull, 0x8000ull},
+    {0x15100000ull, 0x10000ull},
+  };
+  assert(!ResolveSystemDmaAllocation(m.allocations[6], fragmentedBootloader));
+  assert(!ResolveSystemDmaAllocation(m.allocations[7], {})); // framebuffer, not DriverKit DMA
+
   ResolvedAddresses a{
     .queueBacking = 0x10000000ull,
     .cachedArguments = 0x10100000ull,
