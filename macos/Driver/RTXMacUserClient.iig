@@ -15,6 +15,9 @@ public:
       const IOUserClientMethodDispatch* dispatch,
       OSObject* target,
       void* reference) override;
+
+  kern_return_t ValidatePackage(IOUserClientMethodArguments* arguments) LOCALONLY;
+  kern_return_t GetValidationStatus(IOUserClientMethodArguments* arguments) LOCALONLY;
 };
 
 #endif
