@@ -44,6 +44,7 @@ targets:
         HEADER_SEARCH_PATHS:
           - $(inherited)
           - $(SRCROOT)/macos/Driver
+          - $(SRCROOT)/include
         OTHER_LDFLAGS: "$(inherited) -framework DriverKit -framework PCIDriverKit"
 
   RTXMacHost:
