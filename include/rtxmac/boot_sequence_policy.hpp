@@ -12,11 +12,21 @@ enum class BootSequencePolicyFailure : std::uint8_t {
   None = 0,
   InvalidManifest,
   InvalidSequence,
+  InvalidExpectations,
   WrongPhaseCount,
   WrongPhaseOrder,
   FalconActionDenied,
+  UnexpectedAction,
+  MissingAction,
   UnexpectedCheck,
   MissingCheck,
+};
+
+struct BootSequencePolicyExpectations {
+  // Independent dynamic facts used to validate the few direct actions that are
+  // not fully determined by the static GA102 register allowlist.
+  std::uint64_t libosInitArguments{};
+  std::uint32_t gspAppVersion{};
 };
 
 struct BootSequencePolicyReport {
@@ -29,11 +39,12 @@ struct BootSequencePolicyReport {
 };
 
 // Audit the complete GA102 bootstrap sequence independently of the planner.
-// This validates the fixed phase order, every Falcon/direct MMIO action through
-// CheckGa102PlanPolicy(), and the exact non-action checks expected by the boot
-// protocol. It performs no hardware access.
+// Besides fixed phase order and the Falcon static allowlist, this requires the
+// exact dynamic libOS mailbox pointer and parsed GSP appVersion. Check-only
+// phases are forbidden from smuggling in otherwise-allowed writes.
 [[nodiscard]] BootSequencePolicyReport CheckGa102BootSequencePolicy(
     const BootManifest& manifest,
-    const BootSequence& sequence) noexcept;
+    const BootSequence& sequence,
+    const BootSequencePolicyExpectations& expectations) noexcept;
 
 } // namespace rtxmac::nvidia::gsp
