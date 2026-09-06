@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(rtxmac_core STATIC
     src/core/pci_identity.cpp
+    src/core/pci_identity_policy.cpp
     src/core/nvidia_boot.cpp
     src/core/nvidia_probe.cpp
     src/core/nvidia_snapshot.cpp
