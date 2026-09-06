@@ -15,6 +15,36 @@ void SetFailure(RTXMacStagedPackage* staged,
   staged->failedSectionIndex = sectionIndex;
 }
 
+void ReleaseAndRestoreFailure(
+    RTXMacStagedPackage* staged,
+    const rtxmac::nvidia::package::DmaStagingPlan& plan,
+    RTXMacPackageStageStatus status,
+    kern_return_t ioStatus,
+    std::uint32_t sectionIndex) noexcept {
+  if (!staged) return;
+  RTXMacReleaseStagedPackage(staged);
+  staged->status = status;
+  staged->ioStatus = ioStatus;
+  staged->failedSectionIndex = sectionIndex;
+  staged->planStatus = plan.status;
+  staged->totalLogicalBytes = plan.totalLogicalBytes;
+  staged->totalAllocationBytes = plan.totalAllocationBytes;
+}
+
+bool IsLinearPageList(const std::uint64_t* pages,
+                      std::uint32_t pageCount) noexcept {
+  if (!pages || pageCount == 0u) return false;
+  for (std::uint32_t i = 1u; i < pageCount; ++i) {
+    const std::uint64_t previous = pages[i - 1u];
+    if (previous > std::numeric_limits<std::uint64_t>::max() -
+                       kRTXMacDmaPageBytes ||
+        pages[i] != previous + kRTXMacDmaPageBytes) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 kern_return_t RTXMacStageVerifiedPackage(
@@ -48,72 +78,51 @@ kern_return_t RTXMacStageVerifiedPackage(
     const DmaSectionPlan& sectionPlan = plan.sections[i];
     RTXMacStagedPackageSection& stagedSection = out->sections[i];
     stagedSection.kind = sectionPlan.kind;
+    stagedSection.layout = sectionPlan.layout;
     stagedSection.logicalBytes = sectionPlan.logicalBytes;
     stagedSection.allocationBytes = sectionPlan.allocationBytes;
 
     const std::span<const std::uint8_t> payload =
         FindSection(bytes, view, sectionPlan.kind);
     if (payload.empty() || payload.size() != sectionPlan.logicalBytes) {
-      SetFailure(out, RTXMacPackageStageStatus::SectionLookupFailed,
-                 kIOReturnBadArgument, static_cast<std::uint32_t>(i));
-      RTXMacReleaseStagedPackage(out);
-      out->status = RTXMacPackageStageStatus::SectionLookupFailed;
-      out->ioStatus = kIOReturnBadArgument;
-      out->failedSectionIndex = static_cast<std::uint32_t>(i);
-      out->planStatus = plan.status;
-      out->totalLogicalBytes = plan.totalLogicalBytes;
-      out->totalAllocationBytes = plan.totalAllocationBytes;
+      ReleaseAndRestoreFailure(
+          out, plan, RTXMacPackageStageStatus::SectionLookupFailed,
+          kIOReturnBadArgument, static_cast<std::uint32_t>(i));
       return kIOReturnBadArgument;
     }
 
     kern_return_t kr = RTXMacAllocateAndPrepareDmaBuffer(
         pci, sectionPlan.allocationBytes, &stagedSection.dma);
     if (kr != kIOReturnSuccess) {
-      RTXMacReleaseStagedPackage(out);
-      out->status = RTXMacPackageStageStatus::DmaAllocationFailed;
-      out->ioStatus = kr;
-      out->failedSectionIndex = static_cast<std::uint32_t>(i);
-      out->planStatus = plan.status;
-      out->totalLogicalBytes = plan.totalLogicalBytes;
-      out->totalAllocationBytes = plan.totalAllocationBytes;
+      ReleaseAndRestoreFailure(
+          out, plan, RTXMacPackageStageStatus::DmaAllocationFailed,
+          kr, static_cast<std::uint32_t>(i));
       return kr;
     }
 
     kr = RTXMacCopyIntoPreparedDmaBufferPadded(
         &stagedSection.dma, payload.data(), sectionPlan.logicalBytes);
     if (kr != kIOReturnSuccess) {
-      RTXMacReleaseStagedPackage(out);
-      out->status = RTXMacPackageStageStatus::DmaPopulationFailed;
-      out->ioStatus = kr;
-      out->failedSectionIndex = static_cast<std::uint32_t>(i);
-      out->planStatus = plan.status;
-      out->totalLogicalBytes = plan.totalLogicalBytes;
-      out->totalAllocationBytes = plan.totalAllocationBytes;
+      ReleaseAndRestoreFailure(
+          out, plan, RTXMacPackageStageStatus::DmaPopulationFailed,
+          kr, static_cast<std::uint32_t>(i));
       return kr;
     }
 
     if (sectionPlan.pageCount == 0u ||
         sectionPlan.pageCount > std::numeric_limits<std::uint32_t>::max()) {
-      RTXMacReleaseStagedPackage(out);
-      out->status = RTXMacPackageStageStatus::PageAddressAllocationFailed;
-      out->ioStatus = kIOReturnNoResources;
-      out->failedSectionIndex = static_cast<std::uint32_t>(i);
-      out->planStatus = plan.status;
-      out->totalLogicalBytes = plan.totalLogicalBytes;
-      out->totalAllocationBytes = plan.totalAllocationBytes;
+      ReleaseAndRestoreFailure(
+          out, plan, RTXMacPackageStageStatus::PageAddressAllocationFailed,
+          kIOReturnNoResources, static_cast<std::uint32_t>(i));
       return kIOReturnNoResources;
     }
 
     const auto expectedPages = static_cast<std::uint32_t>(sectionPlan.pageCount);
     stagedSection.pageAddresses = new std::uint64_t[expectedPages]();
     if (!stagedSection.pageAddresses) {
-      RTXMacReleaseStagedPackage(out);
-      out->status = RTXMacPackageStageStatus::PageAddressAllocationFailed;
-      out->ioStatus = kIOReturnNoMemory;
-      out->failedSectionIndex = static_cast<std::uint32_t>(i);
-      out->planStatus = plan.status;
-      out->totalLogicalBytes = plan.totalLogicalBytes;
-      out->totalAllocationBytes = plan.totalAllocationBytes;
+      ReleaseAndRestoreFailure(
+          out, plan, RTXMacPackageStageStatus::PageAddressAllocationFailed,
+          kIOReturnNoMemory, static_cast<std::uint32_t>(i));
       return kIOReturnNoMemory;
     }
 
@@ -126,16 +135,21 @@ kern_return_t RTXMacStageVerifiedPackage(
     if (kr != kIOReturnSuccess || pageCount != expectedPages) {
       const kern_return_t failure =
           kr == kIOReturnSuccess ? kIOReturnError : kr;
-      RTXMacReleaseStagedPackage(out);
-      out->status = RTXMacPackageStageStatus::PageAddressValidationFailed;
-      out->ioStatus = failure;
-      out->failedSectionIndex = static_cast<std::uint32_t>(i);
-      out->planStatus = plan.status;
-      out->totalLogicalBytes = plan.totalLogicalBytes;
-      out->totalAllocationBytes = plan.totalAllocationBytes;
+      ReleaseAndRestoreFailure(
+          out, plan, RTXMacPackageStageStatus::PageAddressValidationFailed,
+          failure, static_cast<std::uint32_t>(i));
       return failure;
     }
     stagedSection.pageCount = pageCount;
+
+    if (sectionPlan.layout == DmaSectionLayout::Linear &&
+        !IsLinearPageList(stagedSection.pageAddresses,
+                          stagedSection.pageCount)) {
+      ReleaseAndRestoreFailure(
+          out, plan, RTXMacPackageStageStatus::DmaLayoutRejected,
+          kIOReturnNoResources, static_cast<std::uint32_t>(i));
+      return kIOReturnNoResources;
+    }
   }
 
   out->ready = true;
@@ -155,6 +169,7 @@ void RTXMacReleaseStagedPackage(RTXMacStagedPackage* staged) noexcept {
     section.pageCount = 0u;
     RTXMacReleasePreparedDmaBuffer(&section.dma);
     section.kind = {};
+    section.layout = rtxmac::nvidia::package::DmaSectionLayout::PageList;
     section.logicalBytes = 0u;
     section.allocationBytes = 0u;
   }
@@ -183,6 +198,8 @@ const char* RTXMacPackageStageStatusName(
       return "page-address-allocation-failed";
     case RTXMacPackageStageStatus::PageAddressValidationFailed:
       return "page-address-validation-failed";
+    case RTXMacPackageStageStatus::DmaLayoutRejected:
+      return "dma-layout-rejected";
   }
   return "unknown";
 }
