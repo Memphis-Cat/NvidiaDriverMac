@@ -81,8 +81,6 @@ kern_return_t WriteSelector(IOMemoryDescriptor* bar0,
 
   auto* reg = reinterpret_cast<volatile std::uint32_t*>(range.bytes);
   *reg = value;
-  // PCIe MMIO writes may be posted. A read from the same BAR/register provides
-  // an ordering point before the aperture write begins.
   const volatile std::uint32_t postedWriteFlush = *reg;
   (void)postedWriteFlush;
   ReleaseMappedRange(&range);
@@ -120,12 +118,60 @@ kern_return_t WriteAperture(IOMemoryDescriptor* bar0,
     *dst = value;
   }
 
-  // Flush the final posted aperture write before switching PRAMIN windows or
-  // returning to a caller that may start a Falcon engine immediately after.
   auto* last = reinterpret_cast<volatile std::uint32_t*>(range.bytes + bytes - sizeof(std::uint32_t));
   const volatile std::uint32_t postedWriteFlush = *last;
   (void)postedWriteFlush;
   ReleaseMappedRange(&range);
+  return kIOReturnSuccess;
+}
+
+kern_return_t CompareAperture(IOMemoryDescriptor* bar0,
+                              std::uint64_t bar0Size,
+                              std::uint32_t bar0Offset,
+                              const std::uint8_t* expected,
+                              std::uint64_t bytes) noexcept {
+  using namespace rtxmac;
+  using namespace rtxmac::nvidia;
+
+  if (!expected || bytes == 0u || (bytes & 3u) != 0u) return kIOReturnBadArgument;
+  constexpr std::array regions{
+      MmioWriteRegionRule{
+          .offset = kPraminApertureOffset,
+          .length = kPraminApertureBytes,
+          .alignment = 4u,
+      },
+  };
+  if (CheckMmioRegionWrite(regions, bar0Offset, bytes) != RegionWriteDecision::Allowed) {
+    return kIOReturnNotPermitted;
+  }
+
+  MappedMmioRange range{};
+  kern_return_t kr = MapBar0Range(bar0, bar0Size, bar0Offset, bytes, &range);
+  if (kr != kIOReturnSuccess) return kr;
+
+  for (std::uint64_t offset = 0; offset < bytes; offset += sizeof(std::uint32_t)) {
+    std::uint32_t expectedValue = 0u;
+    std::memcpy(&expectedValue, expected + offset, sizeof(expectedValue));
+    const auto* src = reinterpret_cast<const volatile std::uint32_t*>(range.bytes + offset);
+    if (*src != expectedValue) {
+      ReleaseMappedRange(&range);
+      return kIOReturnIOError;
+    }
+  }
+
+  ReleaseMappedRange(&range);
+  return kIOReturnSuccess;
+}
+
+kern_return_t ValidateStage(const rtxmac::nvidia::PraminStagePlan& stage,
+                            std::uint64_t sourceBytes) noexcept {
+  using namespace rtxmac::nvidia;
+  if (!stage.valid || stage.vramSize == 0u || stage.totalBytes == 0u ||
+      stage.chunks.empty() || sourceBytes != stage.totalBytes ||
+      stage.vramOffset >= stage.vramSize ||
+      stage.totalBytes > stage.vramSize - stage.vramOffset) {
+    return kIOReturnBadArgument;
+  }
   return kIOReturnSuccess;
 }
 } // namespace
@@ -138,12 +184,9 @@ kern_return_t RTXMacStagePramin(
     std::uint64_t sourceBytes) noexcept {
   using namespace rtxmac::nvidia;
 
-  if (!bar0 || !source || !stage.valid || stage.vramSize == 0u ||
-      stage.totalBytes == 0u || stage.chunks.empty() ||
-      sourceBytes != stage.totalBytes || stage.vramOffset >= stage.vramSize ||
-      stage.totalBytes > stage.vramSize - stage.vramOffset) {
-    return kIOReturnBadArgument;
-  }
+  if (!bar0 || !source) return kIOReturnBadArgument;
+  kern_return_t validation = ValidateStage(stage, sourceBytes);
+  if (validation != kIOReturnSuccess) return validation;
 
   const auto* sourceBytesPtr = static_cast<const std::uint8_t*>(source);
   std::uint64_t expectedVram = stage.vramOffset;
@@ -183,6 +226,60 @@ kern_return_t RTXMacStagePramin(
         expectedSource > std::numeric_limits<std::uint64_t>::max() - chunk.bytes) {
       return kIOReturnBadArgument;
     }
+    expectedVram += chunk.bytes;
+    expectedSource += chunk.bytes;
+  }
+
+  if (expectedSource != stage.totalBytes ||
+      expectedVram != stage.vramOffset + stage.totalBytes) {
+    return kIOReturnBadArgument;
+  }
+  return kIOReturnSuccess;
+}
+
+kern_return_t RTXMacVerifyPramin(
+    IOMemoryDescriptor* bar0,
+    std::uint64_t bar0Size,
+    const rtxmac::nvidia::PraminStagePlan& stage,
+    const void* expected,
+    std::uint64_t expectedBytes) noexcept {
+  using namespace rtxmac::nvidia;
+
+  if (!bar0 || !expected) return kIOReturnBadArgument;
+  kern_return_t validation = ValidateStage(stage, expectedBytes);
+  if (validation != kIOReturnSuccess) return validation;
+
+  const auto* expectedPtr = static_cast<const std::uint8_t*>(expected);
+  std::uint64_t expectedVram = stage.vramOffset;
+  std::uint64_t expectedSource = 0u;
+
+  for (const auto& chunk : stage.chunks) {
+    if (chunk.bytes == 0u || (chunk.bytes & 3u) != 0u ||
+        chunk.vramOffset != expectedVram || chunk.sourceOffset != expectedSource ||
+        chunk.sourceOffset > expectedBytes || chunk.bytes > expectedBytes - chunk.sourceOffset) {
+      return kIOReturnBadArgument;
+    }
+
+    const std::uint64_t expectedWindow = chunk.vramOffset & ~kPraminWindowMask;
+    const std::uint64_t inWindow = chunk.vramOffset & kPraminWindowMask;
+    const std::uint64_t selector64 = expectedWindow >> 16u;
+    const std::uint64_t aperture64 =
+        static_cast<std::uint64_t>(kPraminApertureOffset) + inWindow;
+    if (chunk.bytes > kPraminWindowBytes - inWindow ||
+        selector64 > std::numeric_limits<std::uint32_t>::max() ||
+        aperture64 > std::numeric_limits<std::uint32_t>::max() ||
+        chunk.windowBase != expectedWindow ||
+        chunk.windowSelector != static_cast<std::uint32_t>(selector64) ||
+        chunk.bar0ApertureOffset != static_cast<std::uint32_t>(aperture64)) {
+      return kIOReturnBadArgument;
+    }
+
+    kern_return_t kr = WriteSelector(bar0, bar0Size, chunk.windowSelector);
+    if (kr != kIOReturnSuccess) return kr;
+    kr = CompareAperture(bar0, bar0Size, chunk.bar0ApertureOffset,
+                         expectedPtr + chunk.sourceOffset, chunk.bytes);
+    if (kr != kIOReturnSuccess) return kr;
+
     expectedVram += chunk.bytes;
     expectedSource += chunk.bytes;
   }
