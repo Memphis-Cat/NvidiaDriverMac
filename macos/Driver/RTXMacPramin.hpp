@@ -3,7 +3,7 @@
 #include <DriverKit/IOMemoryDescriptor.h>
 #include <DriverKit/IOReturn.h>
 
-#include "../../include/rtxmac/pramin.hpp"
+#include "rtxmac/pramin.hpp"
 
 #include <cstdint>
 
