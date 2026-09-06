@@ -24,6 +24,7 @@ targets:
       - path: macos/Driver
         excludes:
           - README.md
+      - path: src/core/sysmem_flush.cpp
     dependencies:
       - sdk: DriverKit.framework
       - sdk: PCIDriverKit.framework
