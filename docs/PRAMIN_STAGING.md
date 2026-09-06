@@ -28,7 +28,7 @@ A transfer crossing a 1 MiB boundary must select the next window before continui
 
 ## Current implementation
 
-`PlanPraminStage()` is planning-only. It validates that the complete target range is inside VRAM and splits it into chunks that never cross a PRAMIN window. Each chunk records:
+`PlanPraminStage()` validates that the complete target range is inside VRAM and splits it into chunks that never cross a PRAMIN window. Each chunk records:
 
 - source-image offset
 - VRAM target offset
@@ -44,19 +44,32 @@ A transfer crossing a 1 MiB boundary must select the next window before continui
 - entirely below `gspFwRsvdStart`
 - non-overlapping with one another
 
-This prevents temporary source images from overwriting the reserved/WPR/VBIOS tail.
+`BuildFramebufferStageArtifact()` binds exact firmware bytes to a staging plan. The logical firmware occupies the prefix of the transfer image and every page-rounded padding byte is explicitly zeroed. This prevents stale/uninitialized host memory from being copied into VRAM.
+
+The DriverKit layer now also contains cold PRAMIN execution primitives:
+
+- `RTXMacStagePramin()` — policy-bounded selector + aperture writes
+- `RTXMacVerifyPramin()` — readback comparison after staging
+- `RTXMacReadPramin()` — capture an existing staging range into caller-owned memory
+- `RTXMacStagePraminTransactional()` — backup, stage, verify, and restore+verify on failure
+
+The register/data policy grants only the PRAMIN selector register and the exact 1 MiB aperture. Every planner chunk is independently revalidated before BAR0 access. PCIe posted writes are ordered with readback before changing windows or returning to the caller.
 
 ## Safety boundary
 
-No current DriverKit attach path executes this plan. `RTXMacDriver::Start_Impl()` remains read-only.
+`RTXMacDriver::Start_Impl()` remains read-only. None of the PRAMIN staging, verification, backup, rollback, reset, firmware-execution, or GSP-boot code is called when the DEXT attaches.
 
-Before any PRAMIN write executor is enabled we still need:
+Every public PRAMIN operation has an explicit `writesEnabled` gate that defaults to `false`. An accidental call therefore returns `kIOReturnNotPermitted` before BAR0 access. Readback/backup also uses this gate because changing the PRAMIN selector is itself an MMIO write.
 
-1. an explicit write gate that defaults off;
-2. BAR0 range mapping with exact bounds checks;
-3. selector-write + readback/flush semantics verified for GA102;
-4. a rollback path for every failure;
-5. staging-image length/padding verification;
-6. a dry-run trace showing every window transition and target range.
+The original pre-write checklist is now implemented as follows:
+
+1. explicit write gate defaulting off — implemented;
+2. exact BAR0 bounds checking — implemented;
+3. selector write + posted-write readback/flush — implemented;
+4. rollback path — implemented as caller-buffered transactional backup/restore with post-restore verification;
+5. staging-image length/padding validation — implemented with deterministic zero padding;
+6. dry-run trace of every selector/aperture transition — implemented in the portable core.
+
+These pieces being present does **not** mean hardware execution is enabled or ready for a user boot test. Before that milestone, the higher-level boot orchestration still needs to bind real parsed FRTS/SEC2 images to the staging artifacts, keep PRAMIN execution behind an explicit experimental mode, validate the PCI bus-master transition, and execute Falcon/GSP phases with per-phase failure checks.
 
 Do not infer GH100/Blackwell behavior from the GA102 constants. Newer Nouveau code uses a different BAR0-window register on GH100-class hardware.
