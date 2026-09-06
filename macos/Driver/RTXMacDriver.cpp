@@ -2,6 +2,7 @@
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOMemoryMap.h>
+#include <DriverKit/IOUserClient.h>
 #include <PCIDriverKit/PCIDriverKit.h>
 
 #include <cstdint>
@@ -174,11 +175,28 @@ kern_return_t RTXMacDriver::Start_Impl(IOService* provider) {
   // Prototype 1 remains intentionally read-only. Reusable DMA preparation,
   // PRAMIN transactions, reset recovery, Falcon execution, and single-step GSP
   // phase execution are compiled in separate cold modules but are never called
-  // from Start_Impl. No config writes, MMIO writes, resets, firmware loading, or
-  // GSP boot occur merely because the DriverKit extension attaches.
+  // from Start_Impl. The user client added later in the prototype is also
+  // validation-only: package upload does not cause any GPU write or reset.
   LogDiagnosticSnapshot(this, ivars->pci);
 
   RegisterService();
+  return kIOReturnSuccess;
+}
+
+kern_return_t RTXMacDriver::NewUserClient_Impl(
+    std::uint32_t type,
+    IOUserClient** userClient) {
+  if (type != 0u || !userClient) return kIOReturnBadArgument;
+  *userClient = nullptr;
+
+  IOService* service = nullptr;
+  kern_return_t kr = Create(this, "UserClientProperties", &service);
+  if (kr != kIOReturnSuccess) return kr;
+  *userClient = OSDynamicCast(IOUserClient, service);
+  if (!*userClient) {
+    service->release();
+    return kIOReturnUnsupported;
+  }
   return kIOReturnSuccess;
 }
 
