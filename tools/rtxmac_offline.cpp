@@ -1,4 +1,5 @@
 #include "rtxmac/boot_package.hpp"
+#include "rtxmac/boot_package_policy.hpp"
 #include "rtxmac/dma_plan.hpp"
 #include "rtxmac/gsp_boot.hpp"
 #include "rtxmac/nvfw.hpp"
@@ -125,6 +126,10 @@ int PackageInfoBytes(std::span<const std::uint8_t> bytes) {
   const auto view = ParseAndVerify(bytes);
   std::cout << "status=" << ParseStatusName(view.status) << '\n';
   if (view.status != ParseStatus::Ok) return 1;
+  const auto semantic = CheckGa10xPackageSemantics(bytes, view);
+  std::cout << "semantic_status=" << SemanticFailureName(semantic.failure) << '\n';
+  if (!semantic.valid) return 1;
+
   std::cout << rtxmac::Describe(view.metadata.pci) << '\n';
   std::cout << std::hex << std::showbase;
   std::cout << "package_bytes=" << view.packageBytes << '\n';
@@ -189,6 +194,10 @@ int BuildPackage(int argc, char** argv) {
   const auto verified = ParseAndVerify(built.bytes);
   std::cout << "self_verify=" << ParseStatusName(verified.status) << '\n';
   if (verified.status != ParseStatus::Ok) return 1;
+  const auto semantic = CheckGa10xPackageSemantics(built.bytes, verified);
+  std::cout << "self_semantic=" << SemanticFailureName(semantic.failure) << '\n';
+  if (!semantic.valid) return 1;
+
   if (!WriteFile(argv[8], built.bytes)) {
     std::cerr << "Could not write package file.\n";
     return 1;
