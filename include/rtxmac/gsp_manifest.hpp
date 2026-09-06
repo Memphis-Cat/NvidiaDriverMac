@@ -26,11 +26,7 @@ enum class AllocationKind : std::uint8_t {
 
 enum class DmaLayoutRequirement : std::uint8_t {
   None = 0,
-  // ABI exposes one base address + byte count. Returned DMA segments must form
-  // one adjacent GPU-visible range even if DriverKit reports several entries.
   Linear,
-  // ABI has explicit page indirection (queue PTEs or Radix3), so genuinely
-  // fragmented page IOVAs are supported.
   PageList,
 };
 
@@ -52,11 +48,6 @@ struct ResolvedDmaAllocation {
   std::vector<std::uint64_t> pageAddresses;
 };
 
-// Apply the manifest's DMA-layout contract to one DriverKit-style scatter list.
-// Linear allocations must resolve to one adjacent GPU IOVA range. PageList
-// allocations may be fragmented but every returned logical page must be 4K
-// aligned and exactly cover allocationBytes. Framebuffer/non-DMA entries are
-// intentionally rejected because they are resolved through BAR/VRAM handling.
 [[nodiscard]] std::optional<ResolvedDmaAllocation> ResolveSystemDmaAllocation(
     const AllocationRequirement& requirement,
     std::span<const rtxmac::DmaSegment> segments) noexcept;
@@ -73,7 +64,6 @@ struct BootManifest { bool valid{}; ManifestInputs inputs{}; QueueMemoryLayout q
 struct ResolvedAddresses {
   std::uint64_t queueBacking{}; std::uint64_t cachedArguments{}; std::uint64_t libosInitArguments{}; std::uint64_t wprMetadata{};
   std::uint64_t radix3FirmwareRoot{}; std::uint64_t firmwareSignature{}; std::uint64_t gspBootloader{};
-  // These two fields are GPU framebuffer offsets, not CPU BAR1 addresses.
   std::uint64_t frtsFwsecImage{}; std::uint64_t sec2BooterImage{};
 };
 
@@ -90,23 +80,35 @@ struct FramebufferStagingPlan {
   std::vector<FramebufferStageImage> images;
 };
 
-// Plan CPU->VRAM staging for the temporary FRTS FWSEC and SEC2 booter source
-// images. They must be page-aligned, non-overlapping, fully inside framebuffer
-// memory and entirely below gspFwRsvdStart, so they cannot overwrite the GSP
-// reserved/WPR/VBIOS tail. The returned PRAMIN subplans are still offline-only.
 [[nodiscard]] FramebufferStagingPlan PlanFramebufferStaging(
     const BootManifest& manifest,
     const ResolvedAddresses& addresses) noexcept;
+
+struct FramebufferStageArtifact {
+  AllocationKind kind{};
+  std::uint64_t vramOffset{};
+  std::uint64_t logicalBytes{};
+  std::uint64_t allocationBytes{};
+  rtxmac::nvidia::PraminStagePlan pramin;
+  // Exact PRAMIN transfer image. The logical firmware occupies the prefix and
+  // every byte in [logicalBytes, allocationBytes) is guaranteed zero.
+  std::vector<std::uint8_t> bytes;
+};
+
+// Bind exact firmware bytes to one planned framebuffer staging destination.
+// Input length must equal logicalBytes. Output length is allocationBytes and
+// page/dword padding is deterministic zero, preventing stale host memory from
+// being copied into VRAM.
+[[nodiscard]] std::optional<FramebufferStageArtifact> BuildFramebufferStageArtifact(
+    const FramebufferStageImage& plan,
+    std::span<const std::uint8_t> firmware) noexcept;
 
 struct ResolvedArtifacts {
   std::array<std::uint8_t, kGspArgumentsCachedBytes> cachedArguments{};
   std::array<std::uint8_t, kWprMetaBytes> wprMetadata{};
   std::array<std::uint8_t, kLibosInitPageBytes> libosInitArguments{};
-  // Full page-table + command-queue + status-queue backing allocation.
   std::vector<std::uint8_t> sharedQueueAllocation;
-  // Full Radix3 table prefix + GSP-RM firmware image allocation.
   std::vector<std::uint8_t> radix3FirmwareAllocation;
-  // Kept separately for diagnostics/comparison with NVIDIA queue construction.
   std::vector<std::uint8_t> bootstrapCommandQueue;
 };
 [[nodiscard]] std::optional<ResolvedArtifacts> BuildResolvedArtifacts(
