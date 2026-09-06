@@ -20,6 +20,7 @@ add_library(rtxmac_core STATIC
     src/core/gsp_metadata.cpp
     src/core/gsp_radix3.cpp
     src/core/gsp_manifest.cpp
+    src/core/framebuffer_stage.cpp
     src/core/elf.cpp
     src/core/nvfw.cpp
     src/core/vbios.cpp
