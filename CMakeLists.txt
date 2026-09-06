@@ -25,6 +25,7 @@ add_library(rtxmac_core STATIC
     src/core/boot_recovery.cpp
     src/core/boot_preflight.cpp
     src/core/reset_recovery.cpp
+    src/core/reset_postcheck.cpp
     src/core/elf.cpp
     src/core/nvfw.cpp
     src/core/vbios.cpp
@@ -128,6 +129,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-reset-recovery-tests tests/test_reset_recovery.cpp)
   target_link_libraries(rtxmac-reset-recovery-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-pci-gpu-reset-recovery COMMAND rtxmac-reset-recovery-tests)
+
+  add_executable(rtxmac-reset-postcheck-tests tests/test_reset_postcheck.cpp)
+  target_link_libraries(rtxmac-reset-postcheck-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-pci-gpu-reset-postcheck COMMAND rtxmac-reset-postcheck-tests)
 
   add_executable(rtxmac-elf-tests tests/test_elf.cpp)
   target_link_libraries(rtxmac-elf-tests PRIVATE rtxmac_core)
