@@ -79,6 +79,7 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         SYSTEM_EXTENSION_TARGETS: RTXMac
     dependencies:
+      - sdk: IOKit.framework
       - target: RTXMac
         embed: true
         codeSign: false
