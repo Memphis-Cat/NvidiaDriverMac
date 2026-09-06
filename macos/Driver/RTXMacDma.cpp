@@ -127,6 +127,32 @@ const RTXMacPreparedDmaChunk* FindChunk(
   }
   return nullptr;
 }
+
+kern_return_t SynchronizePreparedWrites(
+    const RTXMacPreparedDmaBuffer* prepared) noexcept {
+  if (!prepared || !prepared->memory || !prepared->chunks ||
+      prepared->length == 0u) {
+    return kIOReturnBadArgument;
+  }
+
+  for (std::uint32_t i = 0u; i < prepared->chunkCount; ++i) {
+    const auto& chunk = prepared->chunks[i];
+    if (!chunk.command || chunk.length == 0u ||
+        chunk.offset > prepared->length || chunk.length > prepared->length - chunk.offset) {
+      return kIOReturnError;
+    }
+    // dmaOffset is relative to this command's prepared mapping. dataOffset is
+    // the original descriptor's global offset for the same logical bytes.
+    const kern_return_t kr = chunk.command->PerformOperation(
+        kIODMACommandPerformOperationOptionWrite,
+        0u,
+        chunk.length,
+        chunk.offset,
+        prepared->memory);
+    if (kr != kIOReturnSuccess) return kr;
+  }
+  return kIOReturnSuccess;
+}
 } // namespace
 
 kern_return_t RTXMacAllocateAndPrepareDmaBuffer(
@@ -264,8 +290,19 @@ kern_return_t RTXMacCopyIntoPreparedDmaBuffer(
     const RTXMacPreparedDmaBuffer* prepared,
     const void* source,
     std::uint64_t sourceBytes) noexcept {
+  if (!prepared || sourceBytes != prepared->length) {
+    return kIOReturnBadArgument;
+  }
+  return RTXMacCopyIntoPreparedDmaBufferPadded(prepared, source, sourceBytes);
+}
+
+kern_return_t RTXMacCopyIntoPreparedDmaBufferPadded(
+    const RTXMacPreparedDmaBuffer* prepared,
+    const void* source,
+    std::uint64_t sourceBytes) noexcept {
   if (!prepared || !prepared->memory || !prepared->chunks || !source ||
-      sourceBytes != prepared->length || sourceBytes == 0u ||
+      sourceBytes == 0u || sourceBytes > prepared->length ||
+      prepared->length > static_cast<std::uint64_t>(~std::size_t{0}) ||
       sourceBytes > static_cast<std::uint64_t>(~std::size_t{0})) {
     return kIOReturnBadArgument;
   }
@@ -273,28 +310,17 @@ kern_return_t RTXMacCopyIntoPreparedDmaBuffer(
   IOAddressSegment range{};
   kern_return_t kr = prepared->memory->GetAddressRange(&range);
   if (kr != kIOReturnSuccess) return kr;
-  if (range.address == 0u || range.length < sourceBytes) return kIOReturnNoResources;
-
-  std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(range.address)),
-              source, static_cast<std::size_t>(sourceBytes));
-
-  for (std::uint32_t i = 0u; i < prepared->chunkCount; ++i) {
-    const auto& chunk = prepared->chunks[i];
-    if (!chunk.command || chunk.length == 0u ||
-        chunk.offset > prepared->length || chunk.length > prepared->length - chunk.offset) {
-      return kIOReturnError;
-    }
-    // dmaOffset is relative to this command's prepared mapping. dataOffset is
-    // the original descriptor's global offset for the same logical bytes.
-    kr = chunk.command->PerformOperation(
-        kIODMACommandPerformOperationOptionWrite,
-        0u,
-        chunk.length,
-        chunk.offset,
-        prepared->memory);
-    if (kr != kIOReturnSuccess) return kr;
+  if (range.address == 0u || range.length < prepared->length) {
+    return kIOReturnNoResources;
   }
-  return kIOReturnSuccess;
+
+  auto* destination = reinterpret_cast<void*>(
+      static_cast<std::uintptr_t>(range.address));
+  std::memset(destination, 0, static_cast<std::size_t>(prepared->length));
+  std::memcpy(destination, source, static_cast<std::size_t>(sourceBytes));
+
+  kr = SynchronizePreparedWrites(prepared);
+  return kr;
 }
 
 kern_return_t RTXMacReadPreparedDmaU32(
