@@ -22,6 +22,7 @@ add_library(rtxmac_core STATIC
     src/core/gsp_radix3.cpp
     src/core/gsp_manifest.cpp
     src/core/framebuffer_stage.cpp
+    src/core/boot_recovery.cpp
     src/core/elf.cpp
     src/core/nvfw.cpp
     src/core/vbios.cpp
@@ -113,6 +114,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-gsp-manifest-tests tests/test_gsp_manifest.cpp)
   target_link_libraries(rtxmac-gsp-manifest-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-gsp-boot-manifest COMMAND rtxmac-gsp-manifest-tests)
+
+  add_executable(rtxmac-boot-recovery-tests tests/test_boot_recovery.cpp)
+  target_link_libraries(rtxmac-boot-recovery-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-gsp-boot-recovery COMMAND rtxmac-boot-recovery-tests)
 
   add_executable(rtxmac-elf-tests tests/test_elf.cpp)
   target_link_libraries(rtxmac-elf-tests PRIVATE rtxmac_core)
