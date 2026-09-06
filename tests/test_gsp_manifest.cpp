@@ -23,7 +23,6 @@ int main() {
     .frtsSize = 0x100000ull,
     .nonWprHeapSize = 0x100000ull,
     .requestedWprHeapSize = 0x8100000ull,
-    // 513 image pages (last partial) exercises a multi-page level-2 Radix3 tree.
     .gspFirmwareImageBytes = 0x200FEFull,
     .gspSignatureBytes = 0x1000ull,
     .gspBootloaderBytes = 0x18000ull,
@@ -36,18 +35,16 @@ int main() {
   assert(m.allocations[0].kind == AllocationKind::QueueBacking);
   assert(m.allocations[0].requiresDmaMapping);
   assert(m.allocations[0].dmaLayout == DmaLayoutRequirement::PageList);
-  assert(m.allocations[1].dmaLayout == DmaLayoutRequirement::Linear); // cached args
-  assert(m.allocations[2].dmaLayout == DmaLayoutRequirement::Linear); // libOS args
-  assert(m.allocations[3].dmaLayout == DmaLayoutRequirement::Linear); // WPR metadata
+  assert(m.allocations[1].dmaLayout == DmaLayoutRequirement::Linear);
+  assert(m.allocations[2].dmaLayout == DmaLayoutRequirement::Linear);
+  assert(m.allocations[3].dmaLayout == DmaLayoutRequirement::Linear);
   assert(m.allocations[4].kind == AllocationKind::Radix3Firmware);
   assert(m.allocations[4].dmaLayout == DmaLayoutRequirement::PageList);
-  assert(m.allocations[5].dmaLayout == DmaLayoutRequirement::Linear); // signature
-  assert(m.allocations[6].dmaLayout == DmaLayoutRequirement::Linear); // bootloader
+  assert(m.allocations[5].dmaLayout == DmaLayoutRequirement::Linear);
+  assert(m.allocations[6].dmaLayout == DmaLayoutRequirement::Linear);
   assert(!m.allocations[7].requiresDmaMapping && m.allocations[7].dmaLayout == DmaLayoutRequirement::None);
   assert(!m.allocations[8].requiresDmaMapping && m.allocations[8].dmaLayout == DmaLayoutRequirement::None);
 
-  // Page-list allocations may be genuinely fragmented as long as each page is
-  // representable and the total mapping exactly covers the allocation.
   const std::vector<rtxmac::DmaSegment> queueSegments{
     {0x10000000ull, 0x20000ull},
     {0x30000000ull, 0x61000ull},
@@ -60,8 +57,6 @@ int main() {
   assert(queueDma->pageAddresses[31] == 0x1001F000ull);
   assert(queueDma->pageAddresses[32] == 0x30000000ull);
 
-  // Linear boot data may be split into multiple descriptors only when the GPU
-  // IOVA ranges are adjacent and therefore still form one base+size range.
   const std::vector<rtxmac::DmaSegment> linearBootloader{
     {0x14100000ull, 0x8000ull},
     {0x14108000ull, 0x10000ull},
@@ -78,7 +73,7 @@ int main() {
     {0x15100000ull, 0x10000ull},
   };
   assert(!ResolveSystemDmaAllocation(m.allocations[6], fragmentedBootloader));
-  assert(!ResolveSystemDmaAllocation(m.allocations[7], {})); // framebuffer, not DriverKit DMA
+  assert(!ResolveSystemDmaAllocation(m.allocations[7], {}));
 
   ResolvedAddresses a{
     .queueBacking = 0x10000000ull,
@@ -92,8 +87,6 @@ int main() {
     .sec2BooterImage = 0x1F0100000ull,
   };
 
-  // FRTS/SEC2 source images are GPU VRAM offsets. They must remain below the
-  // GSP reserved/WPR tail and must not overlap one another.
   const auto fbStage = PlanFramebufferStaging(m, a);
   assert(fbStage.valid && fbStage.images.size() == 2u);
   assert(fbStage.images[0].kind == AllocationKind::FrtsFwsecImage);
@@ -120,18 +113,19 @@ int main() {
   std::vector<std::uint64_t> queuePages;
   queuePages.reserve(static_cast<std::size_t>(m.queues.pageTableEntryCount));
   for(std::uint64_t i=0;i<m.queues.pageTableEntryCount;++i)
-    queuePages.push_back(a.queueBacking+i*0x2000ull); // deliberately fragmented logical pages
+    queuePages.push_back(a.queueBacking+i*0x2000ull);
 
   std::vector<std::uint64_t> radixPages;
   radixPages.reserve(static_cast<std::size_t>(m.radix3.allocationPages));
   for(std::uint64_t i=0;i<m.radix3.allocationPages;++i)
-    radixPages.push_back(a.radix3FirmwareRoot+i*0x3000ull); // deliberately fragmented pages
+    radixPages.push_back(a.radix3FirmwareRoot+i*0x3000ull);
   std::vector<std::uint8_t> firmware(static_cast<std::size_t>(in.gspFirmwareImageBytes),0u);
   firmware.front()=0x5Au;firmware.back()=0xA5u;
 
   fw::RiscvBootloaderInfo r{};
   r.status=fw::ParseStatus::Ok;
   r.bin.dataSize=static_cast<std::uint32_t>(in.gspBootloaderBytes);
+  r.descriptor.appVersion=0x12345678u;
   r.descriptor.monitorCodeOffset=0x1000;
   r.descriptor.monitorDataOffset=0x9000;
   r.descriptor.manifestOffset=0x200;
@@ -185,14 +179,22 @@ int main() {
   s.load.osDataOffset=0x3000;
   s.load.osDataSize=0x1000;
 
-  auto seq=PlanBootSequence(m,a,f,s,0x174);
+  auto seq=PlanBootSequence(m,a,r,f,s,0x174);
   assert(seq.valid&&seq.executableWithCurrentCore&&seq.phases.size()==12u);
   assert(seq.phases[0].checks.empty());
   assert(seq.phases[3].checks[0].addressOrOffset==0x001FA828u);
+  assert(seq.phases[9].phase==BootPhase::ReleaseGspRiscv);
+  assert(seq.phases[9].actions.size()==1u);
+  assert(seq.phases[9].actions[0].address==0x00110080u);
+  assert(seq.phases[9].actions[0].value==r.descriptor.appVersion);
+
+  auto invalidGspBootloader=r;
+  invalidGspBootloader.status=fw::ParseStatus::TooSmall;
+  assert(!PlanBootSequence(m,a,invalidGspBootloader,f,s,0x174).valid);
 
   auto bad=a;bad.wprMetadata++;
   assert(!BuildResolvedArtifacts(m,bad,r,queuePages,radixPages,firmware,lr,si,defs));
-  assert(!PlanBootSequence(m,bad,f,s,0x174).valid);
+  assert(!PlanBootSequence(m,bad,r,f,s,0x174).valid);
 
   std::cout<<"rtxmac complete GSP boot-manifest tests passed\n";
 }
