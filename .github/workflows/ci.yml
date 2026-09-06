@@ -18,7 +18,7 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
 
   tahoe-driverkit:
-    name: macOS 26 Intel DriverKit compile
+    name: macOS 26 Intel DriverKit + host compile
     runs-on: macos-26-intel
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +31,15 @@ jobs:
           xcodebuild \
             -project NvidiaDriverMac.xcodeproj \
             -target RTXMac \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+      - name: Compile host app without signing
+        run: |
+          xcodebuild \
+            -project NvidiaDriverMac.xcodeproj \
+            -target RTXMacHost \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
