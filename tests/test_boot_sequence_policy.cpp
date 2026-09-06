@@ -60,38 +60,85 @@ int main() {
   const auto sequence = PlanBootSequence(
       manifest, addresses, gspBootloader, fwsec, sec2, 0x174u);
   assert(sequence.valid);
-  const auto report = CheckGa102BootSequencePolicy(manifest, sequence);
+  const BootSequencePolicyExpectations expectations{
+      .libosInitArguments = addresses.libosInitArguments,
+      .gspAppVersion = gspBootloader.descriptor.appVersion,
+  };
+  const auto report = CheckGa102BootSequencePolicy(manifest, sequence, expectations);
   assert(report.valid);
   assert(report.failure == BootSequencePolicyFailure::None);
   assert(report.checkCount == 4u);
   assert(report.actionCount > 0u);
 
-  auto badAction = sequence;
-  badAction.phases[9].actions[0].address = 0x00110500u;
-  const auto badActionReport = CheckGa102BootSequencePolicy(manifest, badAction);
-  assert(!badActionReport.valid);
-  assert(badActionReport.failure == BootSequencePolicyFailure::FalconActionDenied);
-  assert(badActionReport.phaseIndex == 9u);
+  // A register-safe but semantically wrong appVersion is rejected.
+  auto wrongAppVersion = sequence;
+  wrongAppVersion.phases[9].actions[0].value ^= 1u;
+  const auto wrongAppReport = CheckGa102BootSequencePolicy(
+      manifest, wrongAppVersion, expectations);
+  assert(!wrongAppReport.valid);
+  assert(wrongAppReport.failure == BootSequencePolicyFailure::UnexpectedAction);
+  assert(wrongAppReport.phaseIndex == 9u);
+
+  // The two libOS mailbox words must encode the exact independently supplied
+  // pointer, not merely target allowed mailbox registers.
+  auto wrongMailbox = sequence;
+  wrongMailbox.phases[5].actions[0].value += 0x1000u;
+  const auto wrongMailboxReport = CheckGa102BootSequencePolicy(
+      manifest, wrongMailbox, expectations);
+  assert(!wrongMailboxReport.valid);
+  assert(wrongMailboxReport.failure == BootSequencePolicyFailure::UnexpectedAction);
+  assert(wrongMailboxReport.phaseIndex == 5u);
+
+  // Generic Falcon phases still use the independent static address/mask policy.
+  auto deniedFalcon = sequence;
+  deniedFalcon.phases[1].actions.insert(
+      deniedFalcon.phases[1].actions.begin(),
+      {falcon::ActionKind::Write32, 0x00110500u, 1u, 0xFFFFFFFFu, 0u});
+  const auto deniedReport = CheckGa102BootSequencePolicy(
+      manifest, deniedFalcon, expectations);
+  assert(!deniedReport.valid);
+  assert(deniedReport.failure == BootSequencePolicyFailure::FalconActionDenied);
+  assert(deniedReport.phaseIndex == 1u);
+
+  // Check-only phases cannot smuggle in even an otherwise-allowed write.
+  auto unexpectedWrite = sequence;
+  unexpectedWrite.phases[3].actions.push_back(
+      {falcon::ActionKind::Write32, 0x00110040u, 0u, 0xFFFFFFFFu, 0u});
+  const auto unexpectedWriteReport = CheckGa102BootSequencePolicy(
+      manifest, unexpectedWrite, expectations);
+  assert(!unexpectedWriteReport.valid);
+  assert(unexpectedWriteReport.failure == BootSequencePolicyFailure::UnexpectedAction);
+  assert(unexpectedWriteReport.phaseIndex == 3u);
 
   auto badCheck = sequence;
   badCheck.phases[3].checks[0].addressOrOffset ^= 4u;
-  const auto badCheckReport = CheckGa102BootSequencePolicy(manifest, badCheck);
+  const auto badCheckReport = CheckGa102BootSequencePolicy(
+      manifest, badCheck, expectations);
   assert(!badCheckReport.valid);
   assert(badCheckReport.failure == BootSequencePolicyFailure::UnexpectedCheck);
   assert(badCheckReport.phaseIndex == 3u);
 
   auto wrongOrder = sequence;
   std::swap(wrongOrder.phases[4], wrongOrder.phases[5]);
-  const auto wrongOrderReport = CheckGa102BootSequencePolicy(manifest, wrongOrder);
+  const auto wrongOrderReport = CheckGa102BootSequencePolicy(
+      manifest, wrongOrder, expectations);
   assert(!wrongOrderReport.valid);
   assert(wrongOrderReport.failure == BootSequencePolicyFailure::WrongPhaseOrder);
 
   auto missingStatusCheck = sequence;
   missingStatusCheck.phases[11].checks.clear();
-  const auto missingReport = CheckGa102BootSequencePolicy(manifest, missingStatusCheck);
+  const auto missingReport = CheckGa102BootSequencePolicy(
+      manifest, missingStatusCheck, expectations);
   assert(!missingReport.valid);
   assert(missingReport.failure == BootSequencePolicyFailure::MissingCheck);
 
-  std::cout << "rtxmac full GA102 boot-sequence policy tests passed\n";
+  auto badExpectations = expectations;
+  badExpectations.libosInitArguments += 1u;
+  const auto badExpectationReport = CheckGa102BootSequencePolicy(
+      manifest, sequence, badExpectations);
+  assert(!badExpectationReport.valid);
+  assert(badExpectationReport.failure == BootSequencePolicyFailure::InvalidExpectations);
+
+  std::cout << "rtxmac exact full GA102 boot-sequence policy tests passed\n";
   return 0;
 }
