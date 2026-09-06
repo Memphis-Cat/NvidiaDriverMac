@@ -13,7 +13,7 @@ private enum UserClientSelector {
     static let validatePackage: UInt32 = 0
 }
 
-private struct DriverValidationResult: Sendable {
+struct DriverValidationResult: Sendable {
     let accepted: Bool
     let parseStatus: UInt64
     let semanticFailure: UInt64
