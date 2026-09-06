@@ -181,9 +181,11 @@ kern_return_t RTXMacStagePramin(
     std::uint64_t bar0Size,
     const rtxmac::nvidia::PraminStagePlan& stage,
     const void* source,
-    std::uint64_t sourceBytes) noexcept {
+    std::uint64_t sourceBytes,
+    bool writesEnabled) noexcept {
   using namespace rtxmac::nvidia;
 
+  if (!writesEnabled) return kIOReturnNotPermitted;
   if (!bar0 || !source) return kIOReturnBadArgument;
   kern_return_t validation = ValidateStage(stage, sourceBytes);
   if (validation != kIOReturnSuccess) return validation;
@@ -242,9 +244,11 @@ kern_return_t RTXMacVerifyPramin(
     std::uint64_t bar0Size,
     const rtxmac::nvidia::PraminStagePlan& stage,
     const void* expected,
-    std::uint64_t expectedBytes) noexcept {
+    std::uint64_t expectedBytes,
+    bool writesEnabled) noexcept {
   using namespace rtxmac::nvidia;
 
+  if (!writesEnabled) return kIOReturnNotPermitted;
   if (!bar0 || !expected) return kIOReturnBadArgument;
   kern_return_t validation = ValidateStage(stage, expectedBytes);
   if (validation != kIOReturnSuccess) return validation;
