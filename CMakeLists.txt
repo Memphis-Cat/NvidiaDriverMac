@@ -15,6 +15,7 @@ add_library(rtxmac_core STATIC
     src/core/dma.cpp
     src/core/dma_plan.cpp
     src/core/package_dma_plan.cpp
+    src/core/package_dma_resolve.cpp
     src/core/pramin.cpp
     src/core/sysmem_flush.cpp
     src/core/gsp_rpc.cpp
@@ -88,6 +89,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-package-dma-plan-tests tests/test_package_dma_plan.cpp)
   target_link_libraries(rtxmac-package-dma-plan-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-package-dma-staging-plan COMMAND rtxmac-package-dma-plan-tests)
+
+  add_executable(rtxmac-package-dma-resolve-tests tests/test_package_dma_resolve.cpp)
+  target_link_libraries(rtxmac-package-dma-resolve-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-package-dma-resolve COMMAND rtxmac-package-dma-resolve-tests)
 
   add_executable(rtxmac-pramin-tests tests/test_pramin.cpp)
   target_link_libraries(rtxmac-pramin-tests PRIVATE rtxmac_core)
