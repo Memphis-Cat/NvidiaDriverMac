@@ -40,7 +40,7 @@ bool ValidPageList(std::span<const std::uint64_t> pages,
 
 ResolvedPackageDma ResolvePackageDma(
     const DmaStagingPlan& plan,
-    std::span<const StagedSectionPhysicalView> staged) noexcept {
+    std::span<const StagedSectionPhysicalView> staged) {
   ResolvedPackageDma out{};
   if (plan.status != DmaStagingPlanStatus::Ok) {
     out.status = DmaResolveStatus::BadPlan;
