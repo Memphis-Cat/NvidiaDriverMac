@@ -36,11 +36,12 @@ struct ResolvedPackageDma {
 };
 
 // Convert the five cold DriverKit staging results into the portable boot
-// manifest DMA allocation model. This performs no allocation, MMIO, GPU write,
-// reset, firmware execution, or device access.
+// manifest DMA allocation model. This performs no MMIO, GPU write, reset,
+// firmware execution, or device access. The returned vectors own copies of the
+// page lists, so this function is intentionally not noexcept.
 [[nodiscard]] ResolvedPackageDma ResolvePackageDma(
     const DmaStagingPlan& plan,
-    std::span<const StagedSectionPhysicalView> staged) noexcept;
+    std::span<const StagedSectionPhysicalView> staged);
 
 [[nodiscard]] const char* DmaResolveStatusName(DmaResolveStatus status) noexcept;
 
