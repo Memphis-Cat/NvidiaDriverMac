@@ -1,6 +1,7 @@
 #include "RTXMacPackageStaging.hpp"
 
 #include <limits>
+#include <new>
 
 namespace {
 
@@ -107,7 +108,8 @@ kern_return_t RTXMacStageVerifiedPackage(
     }
 
     const auto expectedPages = static_cast<std::uint32_t>(sectionPlan.pageCount);
-    stagedSection.pageAddresses = new std::uint64_t[expectedPages]();
+    stagedSection.pageAddresses =
+        new (std::nothrow) std::uint64_t[expectedPages]();
     if (!stagedSection.pageAddresses) {
       ReleaseAndRestoreFailure(
           out, plan, RTXMacPackageStageStatus::PageAddressAllocationFailed,
