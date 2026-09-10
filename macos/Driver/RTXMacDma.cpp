@@ -1,6 +1,7 @@
 #include "RTXMacDma.hpp"
 
 #include <cstring>
+#include <new>
 
 namespace {
 constexpr std::uint8_t kDmaAddressBits = 40u;
@@ -188,7 +189,7 @@ kern_return_t RTXMacAllocateAndPrepareDmaBuffer(
     return kr;
   }
 
-  auto* chunks = new RTXMacPreparedDmaChunk[chunkCount]();
+  auto* chunks = new (std::nothrow) RTXMacPreparedDmaChunk[chunkCount]();
   if (!chunks) {
     memory->release();
     return kIOReturnNoMemory;
