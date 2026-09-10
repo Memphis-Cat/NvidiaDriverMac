@@ -38,10 +38,10 @@ bool ValidPageList(std::span<const std::uint64_t> pages,
 
 } // namespace
 
-ResolvedPackageDma ResolvePackageDma(
+ResolvedPackageDmaSummary ResolvePackageDmaSummary(
     const DmaStagingPlan& plan,
-    std::span<const StagedSectionPhysicalView> staged) {
-  ResolvedPackageDma out{};
+    std::span<const StagedSectionPhysicalView> staged) noexcept {
+  ResolvedPackageDmaSummary out{};
   if (plan.status != DmaStagingPlanStatus::Ok) {
     out.status = DmaResolveStatus::BadPlan;
     return out;
@@ -85,16 +85,38 @@ ResolvedPackageDma ResolvePackageDma(
       return out;
     }
 
-    ResolvedDmaAllocation& resolved = out.allocations[i];
+    ResolvedPackageDmaEntry& resolved = out.allocations[i];
     resolved.kind = MapAllocationKind(expected.kind);
     resolved.layout = MapLayout(expected.layout);
     resolved.baseAddress = actual.pageAddresses.front();
     resolved.allocationBytes = actual.allocationBytes;
-    resolved.pageAddresses.assign(actual.pageAddresses.begin(), actual.pageAddresses.end());
+    resolved.pageCount = expected.pageCount;
     out.totalPages += expected.pageCount;
   }
 
   out.status = DmaResolveStatus::Ok;
+  return out;
+}
+
+ResolvedPackageDma ResolvePackageDma(
+    const DmaStagingPlan& plan,
+    std::span<const StagedSectionPhysicalView> staged) {
+  ResolvedPackageDma out{};
+  const ResolvedPackageDmaSummary summary = ResolvePackageDmaSummary(plan, staged);
+  out.status = summary.status;
+  out.totalPages = summary.totalPages;
+  if (summary.status != DmaResolveStatus::Ok) return out;
+
+  for (std::size_t i = 0u; i < kSectionCount; ++i) {
+    const ResolvedPackageDmaEntry& entry = summary.allocations[i];
+    const StagedSectionPhysicalView& actual = staged[i];
+    ResolvedDmaAllocation& resolved = out.allocations[i];
+    resolved.kind = entry.kind;
+    resolved.layout = entry.layout;
+    resolved.baseAddress = entry.baseAddress;
+    resolved.allocationBytes = entry.allocationBytes;
+    resolved.pageAddresses.assign(actual.pageAddresses.begin(), actual.pageAddresses.end());
+  }
   return out;
 }
 
