@@ -63,6 +63,17 @@ int main() {
   auto pages = MakePages();
   auto views = MakeViews(plan, pages);
 
+  const auto summary = ResolvePackageDmaSummary(plan, views);
+  assert(summary.status == DmaResolveStatus::Ok);
+  assert(summary.totalPages == 10u);
+  assert(summary.allocations[0].kind == rtxmac::nvidia::gsp::AllocationKind::Radix3Firmware);
+  assert(summary.allocations[1].kind == rtxmac::nvidia::gsp::AllocationKind::FirmwareSignature);
+  assert(summary.allocations[2].kind == rtxmac::nvidia::gsp::AllocationKind::GspBootloader);
+  assert(summary.allocations[1].baseAddress == pages[1][0]);
+  assert(summary.allocations[1].pageCount == 2u);
+  assert(summary.allocations[1].layout == rtxmac::nvidia::gsp::DmaLayoutRequirement::Linear);
+  assert(summary.allocations[0].layout == rtxmac::nvidia::gsp::DmaLayoutRequirement::PageList);
+
   auto resolved = ResolvePackageDma(plan, views);
   assert(resolved.status == DmaResolveStatus::Ok);
   assert(resolved.totalPages == 10u);
@@ -75,29 +86,34 @@ int main() {
   {
     auto badPlan = plan;
     badPlan.status = DmaStagingPlanStatus::PackageNotVerified;
+    assert(ResolvePackageDmaSummary(badPlan, views).status == DmaResolveStatus::BadPlan);
     assert(ResolvePackageDma(badPlan, views).status == DmaResolveStatus::BadPlan);
   }
   {
     auto bad = views;
     bad[0].logicalBytes++;
+    assert(ResolvePackageDmaSummary(plan, bad).status == DmaResolveStatus::SectionMismatch);
     assert(ResolvePackageDma(plan, bad).status == DmaResolveStatus::SectionMismatch);
   }
   {
     auto badPages = pages;
     badPages[0][0] += 1u;
     auto bad = MakeViews(plan, badPages);
+    assert(ResolvePackageDmaSummary(plan, bad).status == DmaResolveStatus::BadPageAddress);
     assert(ResolvePackageDma(plan, bad).status == DmaResolveStatus::BadPageAddress);
   }
   {
     auto badPages = pages;
     badPages[1][1] += 0x1000u;
     auto bad = MakeViews(plan, badPages);
+    assert(ResolvePackageDmaSummary(plan, bad).status == DmaResolveStatus::LinearLayoutRejected);
     assert(ResolvePackageDma(plan, bad).status == DmaResolveStatus::LinearLayoutRejected);
   }
   {
     auto badPages = pages;
     badPages[4].pop_back();
     auto bad = MakeViews(plan, badPages);
+    assert(ResolvePackageDmaSummary(plan, bad).status == DmaResolveStatus::BadPageCount);
     assert(ResolvePackageDma(plan, bad).status == DmaResolveStatus::BadPageCount);
   }
 
