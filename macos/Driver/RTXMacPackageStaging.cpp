@@ -20,13 +20,16 @@ void ReleaseAndRestoreFailure(
     const rtxmac::nvidia::package::DmaStagingPlan& plan,
     RTXMacPackageStageStatus status,
     kern_return_t ioStatus,
-    std::uint32_t sectionIndex) noexcept {
+    std::uint32_t sectionIndex,
+    rtxmac::nvidia::package::DmaResolveStatus resolveStatus =
+        rtxmac::nvidia::package::DmaResolveStatus::BadPlan) noexcept {
   if (!staged) return;
   RTXMacReleaseStagedPackage(staged);
   staged->status = status;
   staged->ioStatus = ioStatus;
   staged->failedSectionIndex = sectionIndex;
   staged->planStatus = plan.status;
+  staged->resolveStatus = resolveStatus;
   staged->totalLogicalBytes = plan.totalLogicalBytes;
   staged->totalAllocationBytes = plan.totalAllocationBytes;
 }
@@ -140,6 +143,32 @@ kern_return_t RTXMacStageVerifiedPackage(
     }
   }
 
+  std::array<StagedSectionPhysicalView, kSectionCount> physicalViews{};
+  for (std::size_t i = 0u; i < kSectionCount; ++i) {
+    const RTXMacStagedPackageSection& section = out->sections[i];
+    physicalViews[i].kind = section.kind;
+    physicalViews[i].layout = section.layout;
+    physicalViews[i].logicalBytes = section.logicalBytes;
+    physicalViews[i].allocationBytes = section.allocationBytes;
+    physicalViews[i].pageAddresses = std::span<const std::uint64_t>(
+        section.pageAddresses, section.pageCount);
+  }
+
+  const ResolvedPackageDmaSummary resolved =
+      ResolvePackageDmaSummary(plan, physicalViews);
+  out->resolveStatus = resolved.status;
+  if (resolved.status != DmaResolveStatus::Ok) {
+    ReleaseAndRestoreFailure(
+        out, plan, RTXMacPackageStageStatus::DmaResolveFailed,
+        kIOReturnError, 0xFFFFFFFFu, resolved.status);
+    return kIOReturnError;
+  }
+
+  out->resolvedTotalPages = resolved.totalPages;
+  for (std::size_t i = 0u; i < kSectionCount; ++i) {
+    out->resolvedBaseAddresses[i] = resolved.allocations[i].baseAddress;
+  }
+
   out->ready = true;
   out->status = RTXMacPackageStageStatus::Ok;
   out->ioStatus = kIOReturnSuccess;
@@ -166,10 +195,13 @@ void RTXMacReleaseStagedPackage(RTXMacStagedPackage* staged) noexcept {
   staged->status = RTXMacPackageStageStatus::Idle;
   staged->planStatus =
       rtxmac::nvidia::package::DmaStagingPlanStatus::PackageNotVerified;
+  staged->resolveStatus = rtxmac::nvidia::package::DmaResolveStatus::BadPlan;
   staged->ioStatus = kIOReturnSuccess;
   staged->failedSectionIndex = 0xFFFFFFFFu;
   staged->totalLogicalBytes = 0u;
   staged->totalAllocationBytes = 0u;
+  staged->resolvedTotalPages = 0u;
+  staged->resolvedBaseAddresses.fill(0u);
 }
 
 const char* RTXMacPackageStageStatusName(
@@ -188,6 +220,8 @@ const char* RTXMacPackageStageStatusName(
       return "page-address-validation-failed";
     case RTXMacPackageStageStatus::DmaLayoutRejected:
       return "dma-layout-rejected";
+    case RTXMacPackageStageStatus::DmaResolveFailed:
+      return "dma-resolve-failed";
   }
   return "unknown";
 }
