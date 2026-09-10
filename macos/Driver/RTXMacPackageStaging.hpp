@@ -3,6 +3,7 @@
 #include "RTXMacDma.hpp"
 #include "rtxmac/boot_package.hpp"
 #include "rtxmac/package_dma_plan.hpp"
+#include "rtxmac/package_dma_resolve.hpp"
 
 #include <PCIDriverKit/PCIDriverKit.h>
 
@@ -25,6 +26,7 @@ enum class RTXMacPackageStageStatus : std::uint32_t {
   PageAddressAllocationFailed,
   PageAddressValidationFailed,
   DmaLayoutRejected,
+  DmaResolveFailed,
 };
 
 struct RTXMacStagedPackageSection {
@@ -43,10 +45,15 @@ struct RTXMacStagedPackage {
   RTXMacPackageStageStatus status{RTXMacPackageStageStatus::Idle};
   rtxmac::nvidia::package::DmaStagingPlanStatus planStatus{
       rtxmac::nvidia::package::DmaStagingPlanStatus::PackageNotVerified};
+  rtxmac::nvidia::package::DmaResolveStatus resolveStatus{
+      rtxmac::nvidia::package::DmaResolveStatus::BadPlan};
   kern_return_t ioStatus{kIOReturnSuccess};
   std::uint32_t failedSectionIndex{0xFFFFFFFFu};
   std::uint64_t totalLogicalBytes{};
   std::uint64_t totalAllocationBytes{};
+  std::uint64_t resolvedTotalPages{};
+  std::array<std::uint64_t, rtxmac::nvidia::package::kSectionCount>
+      resolvedBaseAddresses{};
   std::array<RTXMacStagedPackageSection,
              rtxmac::nvidia::package::kSectionCount> sections{};
 };
@@ -54,7 +61,9 @@ struct RTXMacStagedPackage {
 // The caller supplies bytes that have already passed ParseAndVerify(), semantic
 // policy, and live PCI identity matching. This function rechecks the structural
 // staging preconditions before allocating. Linear-plan sections are additionally
-// rejected unless every returned DMA page is physically contiguous. out must be
+// rejected unless every returned DMA page is physically contiguous. Finally the
+// prepared physical layout is passed through the non-allocating portable DMA
+// resolver and only its cold metadata summary is retained. out must be
 // zero/default initialized or previously produced by this API.
 [[nodiscard]] kern_return_t RTXMacStageVerifiedPackage(
     IOPCIDevice* pci,
