@@ -17,6 +17,7 @@ add_library(rtxmac_core STATIC
     src/core/package_dma_plan.cpp
     src/core/package_dma_resolve.cpp
     src/core/ga10x_prototype.cpp
+    src/core/ga10x_live_preflight.cpp
     src/core/ga10x_boot_prepare.cpp
     src/core/ga10x_boot_resolve.cpp
     src/core/pramin.cpp
@@ -100,6 +101,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-ga10x-prototype-tests tests/test_ga10x_prototype.cpp)
   target_link_libraries(rtxmac-ga10x-prototype-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-ga10x-prototype-profile COMMAND rtxmac-ga10x-prototype-tests)
+
+  add_executable(rtxmac-ga10x-live-preflight-tests tests/test_ga10x_live_preflight.cpp)
+  target_link_libraries(rtxmac-ga10x-live-preflight-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-ga10x-live-boundary-preflight COMMAND rtxmac-ga10x-live-preflight-tests)
 
   add_executable(rtxmac-ga10x-boot-prepare-tests tests/test_ga10x_boot_prepare.cpp)
   target_link_libraries(rtxmac-ga10x-boot-prepare-tests PRIVATE rtxmac_core)
