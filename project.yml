@@ -34,9 +34,7 @@ targets:
       - path: src/core/boot_package_policy.cpp
       - path: src/core/package_dma_plan.cpp
       - path: src/core/package_dma_resolve.cpp
-      - path: src/core/ga10x_prototype.cpp
       - path: src/core/ga10x_live_preflight.cpp
-      - path: src/core/gsp_manifest.cpp
       - path: src/core/sha256.cpp
       - path: src/core/pci_identity_policy.cpp
       - path: src/core/pci_bar.cpp
