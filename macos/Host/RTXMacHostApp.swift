@@ -12,6 +12,7 @@ private let rtxPackageType = UTType(filenameExtension: "rtxpkg") ?? .data
 private enum UserClientSelector {
     static let validatePackage: UInt32 = 0
     static let stagePackage: UInt32 = 2
+    static let systemInfo: UInt32 = 4
 }
 
 struct DriverValidationResult: Sendable {
@@ -60,7 +61,8 @@ struct DriverStagingResult: Sendable {
         let names = [
             "idle", "ok", "bad-argument", "plan-rejected", "section-lookup-failed",
             "dma-allocation-failed", "dma-population-failed",
-            "page-address-allocation-failed", "page-address-validation-failed"
+            "page-address-allocation-failed", "page-address-validation-failed",
+            "dma-layout-rejected", "dma-resolve-failed"
         ]
         let index = Int(stageStatus)
         return index >= 0 && index < names.count ? names[index] : "unknown(\(stageStatus))"
@@ -84,6 +86,47 @@ struct DriverStagingResult: Sendable {
         let names = ["GSP firmware", "GSP signature", "GSP bootloader", "FWSEC", "SEC2 booter"]
         let index = Int(failedSectionIndex)
         return index >= 0 && index < names.count ? names[index] : "index \(failedSectionIndex)"
+    }
+}
+
+struct DriverSystemInfoResult: Sendable {
+    let available: Bool
+    let ioStatus: UInt64
+    let bdf: UInt64
+    let deviceVendor: UInt64
+    let subsystem: UInt64
+    let revision: UInt64
+    let bar0Base: UInt64
+    let bar0Size: UInt64
+    let bar1Base: UInt64
+    let bar1Size: UInt64
+    let bar3Base: UInt64
+    let bar3Size: UInt64
+    let maxUserVa: UInt64
+    let pciConfigMirrorBase: UInt64
+    let pciConfigMirrorSize: UInt64
+    let passthrough: Bool
+
+    var ioStatusDescription: String {
+        String(format: "0x%08X", UInt32(truncatingIfNeeded: ioStatus))
+    }
+
+    var bdfDescription: String {
+        let bus = (bdf >> 8) & 0xff
+        let device = (bdf >> 3) & 0x1f
+        let function = bdf & 0x7
+        return String(format: "%02llX:%02llX.%llX", bus, device, function)
+    }
+
+    var pciIdentityDescription: String {
+        let vendor = UInt16(deviceVendor & 0xffff)
+        let device = UInt16((deviceVendor >> 16) & 0xffff)
+        let subsystemVendor = UInt16(subsystem & 0xffff)
+        let subsystemDevice = UInt16((subsystem >> 16) & 0xffff)
+        return String(
+            format: "%04X:%04X subsystem %04X:%04X",
+            vendor, device, subsystemVendor, subsystemDevice
+        )
     }
 }
 
@@ -128,6 +171,10 @@ private func describePCIIdentity(_ packed: UInt64) -> String {
 
 private func describeDmaAddress(_ address: UInt64) -> String {
     address == 0 ? "—" : String(format: "0x%016llX", address)
+}
+
+private func describeHex(_ value: UInt64) -> String {
+    String(format: "0x%016llX", value)
 }
 
 private func findRTXMacService() -> io_service_t {
@@ -236,6 +283,38 @@ private final class RTXMacDriverSession: @unchecked Sendable {
         }
         return output
     }
+
+    func callScalarOutputMethod(
+        selector: UInt32,
+        expectedOutputCount: UInt32
+    ) throws -> [UInt64] {
+        var output = [UInt64](repeating: 0, count: Int(expectedOutputCount))
+        var outputCount = expectedOutputCount
+        let callResult: kern_return_t = output.withUnsafeMutableBufferPointer { outputBuffer in
+            IOConnectCallMethod(
+                connection,
+                selector,
+                nil,
+                0,
+                nil,
+                0,
+                outputBuffer.baseAddress,
+                &outputCount,
+                nil,
+                nil
+            )
+        }
+        guard callResult == KERN_SUCCESS else {
+            throw DriverConnectionError.methodCallFailed(selector, callResult)
+        }
+        guard outputCount == expectedOutputCount else {
+            throw DriverConnectionError.shortStatus(
+                expected: expectedOutputCount,
+                actual: outputCount
+            )
+        }
+        return output
+    }
 }
 
 private func validatePackageWithDriver(_ data: Data) throws -> DriverValidationResult {
@@ -281,9 +360,38 @@ private func stagePackageWithDriver(
     return (result, session)
 }
 
+private func readSystemInfoWithDriver() throws -> DriverSystemInfoResult {
+    let session = try RTXMacDriverSession.open()
+    let output = try session.callScalarOutputMethod(
+        selector: UserClientSelector.systemInfo,
+        expectedOutputCount: 16
+    )
+    return DriverSystemInfoResult(
+        available: output[0] != 0,
+        ioStatus: output[1],
+        bdf: output[2],
+        deviceVendor: output[3],
+        subsystem: output[4],
+        revision: output[5],
+        bar0Base: output[6],
+        bar0Size: output[7],
+        bar1Base: output[8],
+        bar1Size: output[9],
+        bar3Base: output[10],
+        bar3Size: output[11],
+        maxUserVa: output[12],
+        pciConfigMirrorBase: output[13],
+        pciConfigMirrorSize: output[14],
+        passthrough: output[15] != 0
+    )
+}
+
 @MainActor
 final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDelegate {
     @Published var status = "Driver not activated by this app yet."
+    @Published var systemInfoStatus = "System info has not been read."
+    @Published var systemInfo: DriverSystemInfoResult?
+    @Published var readingSystemInfo = false
     @Published var packageStatus = "No package selected."
     @Published var packageName = "—"
     @Published var validation: DriverValidationResult?
@@ -304,6 +412,31 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
         )
         request.delegate = self
         OSSystemExtensionManager.shared.submitRequest(request)
+    }
+
+    func readSystemInfo() {
+        readingSystemInfo = true
+        systemInfo = nil
+        systemInfoStatus = "Reading PCI BARs and GSP system-info inputs…"
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try readSystemInfoWithDriver()
+                await MainActor.run {
+                    self.readingSystemInfo = false
+                    self.systemInfo = result
+                    self.systemInfoStatus = result.available
+                        ? "Read-only system info collected."
+                        : "System-info collection failed in DriverKit: \(result.ioStatusDescription)."
+                }
+            } catch {
+                await MainActor.run {
+                    self.readingSystemInfo = false
+                    self.systemInfo = nil
+                    self.systemInfoStatus = error.localizedDescription
+                }
+            }
+        }
     }
 
     func validatePackage(at url: URL) {
@@ -370,8 +503,6 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
                     self.staging = false
                     self.stagingResult = result
                     if result.ready {
-                        // Retaining the connection retains the DriverKit user client and
-                        // therefore all prepared package DMA state for later cold stages.
                         self.stagedSession = session
                         self.stagingStatus = "Package staged in prepared SYSRAM. The DriverKit connection is being kept open."
                     } else {
@@ -446,10 +577,49 @@ private struct RTXMacContentView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(extensions.status)
                             .textSelection(.enabled)
-                        Button("Activate read-only driver") {
-                            extensions.activate()
+                        HStack {
+                            Button("Activate read-only driver") {
+                                extensions.activate()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button(extensions.readingSystemInfo ? "Reading system info…" : "Read PCI / GSP system info") {
+                                extensions.readSystemInfo()
+                            }
+                            .disabled(extensions.readingSystemInfo)
                         }
-                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                GroupBox("Read-only PCI / GSP system info") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(extensions.systemInfoStatus)
+                            .textSelection(.enabled)
+
+                        if let info = extensions.systemInfo {
+                            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                                GridRow { Text("Available"); Text(info.available ? "YES" : "NO") }
+                                GridRow { Text("Driver I/O"); Text(info.ioStatusDescription) }
+                                if info.available {
+                                    GridRow { Text("PCI BDF"); Text(info.bdfDescription) }
+                                    GridRow { Text("PCI identity"); Text(info.pciIdentityDescription) }
+                                    GridRow { Text("Revision"); Text(String(format: "0x%02llX", info.revision)) }
+                                    GridRow { Text("BAR0"); Text("\(describeHex(info.bar0Base)) / \(info.bar0Size) bytes") }
+                                    GridRow { Text("BAR1"); Text("\(describeHex(info.bar1Base)) / \(info.bar1Size) bytes") }
+                                    GridRow { Text("BAR3"); Text("\(describeHex(info.bar3Base)) / \(info.bar3Size) bytes") }
+                                    GridRow { Text("Max user VA"); Text(describeHex(info.maxUserVa)) }
+                                    GridRow { Text("PCI config mirror"); Text("\(describeHex(info.pciConfigMirrorBase)) / \(info.pciConfigMirrorSize) bytes") }
+                                    GridRow { Text("Passthrough"); Text(info.passthrough ? "YES" : "NO") }
+                                }
+                            }
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                        }
+
+                        Text("This path only reads PCI configuration/BAR metadata. It does not map BARs for writes, reset the GPU, or execute firmware.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -547,7 +717,7 @@ private struct RTXMacContentView: View {
             }
             .padding(24)
         }
-        .frame(minWidth: 780, minHeight: 620)
+        .frame(minWidth: 820, minHeight: 700)
         .fileImporter(
             isPresented: $importingPackage,
             allowedContentTypes: [rtxPackageType],
