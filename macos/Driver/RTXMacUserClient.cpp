@@ -1,10 +1,12 @@
 #include "RTXMacUserClient.h"
 
 #include "RTXMacDriver.h"
+#include "RTXMacLivePreflight.hpp"
 #include "RTXMacPackageStaging.hpp"
 #include "RTXMacSystemInfo.hpp"
 #include "rtxmac/boot_package.hpp"
 #include "rtxmac/boot_package_policy.hpp"
+#include "rtxmac/ga10x_live_preflight.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOMemoryMap.h>
@@ -21,6 +23,7 @@ constexpr std::uint64_t kMaxPackageBytes = 128ull * 1024ull * 1024ull;
 constexpr std::uint32_t kValidationStatusScalarCount = 8u;
 constexpr std::uint32_t kStagingStatusScalarCount = 13u;
 constexpr std::uint32_t kSystemInfoScalarCount = 16u;
+constexpr std::uint32_t kBoundaryPreflightScalarCount = 11u;
 
 enum Selector : std::uint64_t {
   kValidatePackage = 0u,
@@ -28,7 +31,8 @@ enum Selector : std::uint64_t {
   kStagePackage = 2u,
   kGetStagingStatus = 3u,
   kGetSystemInfo = 4u,
-  kSelectorCount = 5u,
+  kCheckLiveBoundary = 5u,
+  kSelectorCount = 6u,
 };
 
 struct ValidationSnapshot {
@@ -217,6 +221,35 @@ void WriteSystemInfoStatus(kern_return_t ioStatus,
   arguments->scalarOutput[15] = info.inputs.passthrough ? 1u : 0u;
 }
 
+void WriteBoundaryPreflightStatus(
+    bool packageAccepted,
+    const rtxmac::nvidia::prototype::ReservedBoundaryProfile& profile,
+    const RTXMacLiveBoundaryPreflight& live,
+    IOUserClientMethodArguments* arguments) noexcept {
+  if (!arguments || !arguments->scalarOutput ||
+      arguments->scalarOutputCount < kBoundaryPreflightScalarCount) return;
+
+  for (std::uint32_t i = 0u; i < kBoundaryPreflightScalarCount; ++i) {
+    arguments->scalarOutput[i] = 0u;
+  }
+  arguments->scalarOutput[0] = packageAccepted ? 1u : 0u;
+  arguments->scalarOutput[1] = profile.valid ? 1u : 0u;
+  arguments->scalarOutput[2] = live.captured ? 1u : 0u;
+  arguments->scalarOutput[3] = static_cast<std::uint32_t>(live.ioStatus);
+  arguments->scalarOutput[4] = static_cast<std::uint32_t>(live.decision.status);
+  arguments->scalarOutput[5] =
+      packageAccepted && profile.valid && live.captured &&
+      live.ioStatus == kIOReturnSuccess &&
+      live.decision.status ==
+          rtxmac::nvidia::prototype::ReservedBoundaryStatus::Ok
+          ? 1u : 0u;
+  arguments->scalarOutput[6] = live.decision.activeMmuLock ? 1u : 0u;
+  arguments->scalarOutput[7] = live.decision.prototypeBoundary;
+  arguments->scalarOutput[8] = live.decision.effectiveBoundary;
+  arguments->scalarOutput[9] = live.decision.mmuLockLow;
+  arguments->scalarOutput[10] = live.decision.mmuLockHigh;
+}
+
 void SetRejectedStaging(RTXMacStagedPackage* staged,
                         kern_return_t ioStatus) noexcept {
   if (!staged) return;
@@ -259,6 +292,12 @@ kern_return_t SystemInfoAction(OSObject* target,
   return static_cast<RTXMacUserClient*>(target)->GetSystemInfo(arguments);
 }
 
+kern_return_t BoundaryPreflightAction(OSObject* target,
+                                      void*,
+                                      IOUserClientMethodArguments* arguments) {
+  return static_cast<RTXMacUserClient*>(target)->CheckLiveBoundary(arguments);
+}
+
 const IOUserClientMethodDispatch kDispatch[kSelectorCount] = {
     {ValidateAction, false, 0u, kIOUserClientVariableStructureSize,
      kValidationStatusScalarCount, 0u},
@@ -270,6 +309,8 @@ const IOUserClientMethodDispatch kDispatch[kSelectorCount] = {
      kStagingStatusScalarCount, 0u},
     {SystemInfoAction, false, 0u, 0u,
      kSystemInfoScalarCount, 0u},
+    {BoundaryPreflightAction, false, 0u, kIOUserClientVariableStructureSize,
+     kBoundaryPreflightScalarCount, 0u},
 };
 } // namespace
 
@@ -404,5 +445,41 @@ kern_return_t RTXMacUserClient::GetSystemInfo(
       ? RTXMacCollectSystemInfo(pci, &info)
       : kIOReturnNotReady;
   WriteSystemInfoStatus(kr, info, arguments);
+  return kIOReturnSuccess;
+}
+
+kern_return_t RTXMacUserClient::CheckLiveBoundary(
+    IOUserClientMethodArguments* arguments) {
+  using namespace rtxmac::nvidia::package;
+  using namespace rtxmac::nvidia::prototype;
+
+  if (!ivars || !ivars->driver || !arguments) return kIOReturnNotReady;
+
+  InputView input{};
+  const kern_return_t inputKr = MakeInputView(arguments, &input);
+  if (inputKr != kIOReturnSuccess) return inputKr;
+
+  const std::span<const std::uint8_t> bytes(input.bytes, input.size);
+  PackageView view{};
+  ivars->validation = ValidateBytesAgainstLiveGPU(
+      ivars->driver, bytes, &view);
+
+  ReservedBoundaryProfile profile{};
+  RTXMacLiveBoundaryPreflight live{};
+  live.ioStatus = kIOReturnBadArgument;
+
+  if (ivars->validation.accepted) {
+    profile = BuildReservedBoundaryProfile(view);
+    IOPCIDevice* pci = ivars->driver->GetPCI();
+    if (profile.valid && pci) {
+      live = RTXMacCheckLiveReservedBoundary(ivars->driver, pci, profile);
+    } else if (!pci) {
+      live.ioStatus = kIOReturnNotReady;
+    }
+  }
+
+  WriteBoundaryPreflightStatus(
+      ivars->validation.accepted, profile, live, arguments);
+  ReleaseInput(&input);
   return kIOReturnSuccess;
 }
