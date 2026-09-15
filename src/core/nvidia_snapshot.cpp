@@ -44,4 +44,14 @@ std::optional<GspCpuCtlState> GspCpuCtl(const DiagnosticSnapshot& snapshot) noex
   return DecodeGspCpuCtl(sample->value);
 }
 
+std::optional<MmuLockState> MmuLock(const DiagnosticSnapshot& snapshot) noexcept {
+  const auto* plm = snapshot.Find(SnapshotRegisterId::MmuLockPrivMask);
+  const auto* lo = snapshot.Find(SnapshotRegisterId::MmuLockAddrLo);
+  const auto* hi = snapshot.Find(SnapshotRegisterId::MmuLockAddrHi);
+  if (!plm || !lo || !hi || !plm->Ok() || !lo->Ok() || !hi->Ok()) {
+    return std::nullopt;
+  }
+  return DecodeMmuLock(plm->value, lo->value, hi->value);
+}
+
 } // namespace rtxmac::nvidia
