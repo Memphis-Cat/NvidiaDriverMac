@@ -36,6 +36,7 @@ targets:
       - path: src/core/package_dma_resolve.cpp
       - path: src/core/sha256.cpp
       - path: src/core/pci_identity_policy.cpp
+      - path: src/core/pci_bar.cpp
       - path: src/core/elf.cpp
       - path: src/core/nvfw.cpp
       - path: src/core/vbios.cpp
