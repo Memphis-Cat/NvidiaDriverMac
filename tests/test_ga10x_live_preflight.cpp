@@ -44,7 +44,27 @@ int main() {
   using namespace rtxmac::nvidia;
   using namespace rtxmac::nvidia::prototype;
 
-  const auto profile = BuildGa10xPrototypeProfile(MakePackage());
+  const auto package = MakePackage();
+  const auto boundaryProfile = BuildReservedBoundaryProfile(package);
+  assert(boundaryProfile.valid);
+  assert(boundaryProfile.vgaWorkspaceOffset == 0x1FFF00000ull);
+  assert(boundaryProfile.vbiosReservedOffset == 0x1FFF00000ull);
+
+  const auto lightweightMissing =
+      CheckReservedBoundary(boundaryProfile, std::nullopt);
+  assert(lightweightMissing.status == ReservedBoundaryStatus::MmuLockUnavailable);
+
+  auto invalidPackage = package;
+  invalidPackage.status = rtxmac::nvidia::package::ParseStatus::HashMismatch;
+  assert(!BuildReservedBoundaryProfile(invalidPackage).valid);
+  invalidPackage = package;
+  invalidPackage.metadata.pci.device = 0x1234u;
+  assert(!BuildReservedBoundaryProfile(invalidPackage).valid);
+  invalidPackage = package;
+  invalidPackage.metadata.vramBytes = kVgaWorkspaceBytes;
+  assert(!BuildReservedBoundaryProfile(invalidPackage).valid);
+
+  const auto profile = BuildGa10xPrototypeProfile(package);
   assert(profile.status == ProfileStatus::Ok);
   assert(profile.manifestInputs.vgaWorkspaceOffset == 0x1FFF00000ull);
   assert(profile.manifestInputs.vbiosReservedOffset == 0x1FFF00000ull);
@@ -55,6 +75,8 @@ int main() {
   const MmuLockState unreadable{
       .readable = false, .valid = false, .low = 0u, .high = 0u};
   assert(CheckReservedBoundary(profile, unreadable).status ==
+         ReservedBoundaryStatus::MmuLockUnreadable);
+  assert(CheckReservedBoundary(boundaryProfile, unreadable).status ==
          ReservedBoundaryStatus::MmuLockUnreadable);
 
   // Readable but invalid/inverted means NVIDIA's HAL treats the lock as absent.
@@ -78,6 +100,9 @@ int main() {
   assert(okay.status == ReservedBoundaryStatus::Ok);
   assert(okay.activeMmuLock);
   assert(okay.effectiveBoundary == 0x1FFF00000ull);
+  const auto lightweightOkay = CheckReservedBoundary(boundaryProfile, harmless);
+  assert(lightweightOkay.status == ReservedBoundaryStatus::Ok);
+  assert(lightweightOkay.effectiveBoundary == 0x1FFF00000ull);
 
   // A lower VBIOS lock changes the production vbiosReservedOffset. The offline
   // package/profile must be rebuilt; do not merely patch WPR metadata in place.
@@ -90,6 +115,9 @@ int main() {
   assert(rebuild.status == ReservedBoundaryStatus::RebuildRequired);
   assert(rebuild.activeMmuLock);
   assert(rebuild.effectiveBoundary == 0x1FF000000ull);
+  const auto lightweightRebuild = CheckReservedBoundary(boundaryProfile, lower);
+  assert(lightweightRebuild.status == ReservedBoundaryStatus::RebuildRequired);
+  assert(lightweightRebuild.effectiveBoundary == 0x1FF000000ull);
 
   auto invalidProfile = profile;
   invalidProfile.status = ProfileStatus::ManifestRejected;
