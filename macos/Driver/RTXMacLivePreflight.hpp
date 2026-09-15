@@ -5,7 +5,6 @@
 #include <PCIDriverKit/PCIDriverKit.h>
 
 #include "rtxmac/ga10x_live_preflight.hpp"
-#include "rtxmac/ga10x_prototype.hpp"
 
 struct RTXMacLiveBoundaryPreflight {
   kern_return_t ioStatus{kIOReturnError};
@@ -19,4 +18,4 @@ struct RTXMacLiveBoundaryPreflight {
 [[nodiscard]] RTXMacLiveBoundaryPreflight RTXMacCheckLiveReservedBoundary(
     IOService* owner,
     IOPCIDevice* pci,
-    const rtxmac::nvidia::prototype::Profile& profile) noexcept;
+    const rtxmac::nvidia::prototype::ReservedBoundaryProfile& profile) noexcept;
