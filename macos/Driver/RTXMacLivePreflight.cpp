@@ -27,7 +27,7 @@ std::uint32_t ReadMappedU32(std::uintptr_t base,
 RTXMacLiveBoundaryPreflight RTXMacCheckLiveReservedBoundary(
     IOService* owner,
     IOPCIDevice* pci,
-    const rtxmac::nvidia::prototype::Profile& profile) noexcept {
+    const rtxmac::nvidia::prototype::ReservedBoundaryProfile& profile) noexcept {
   RTXMacLiveBoundaryPreflight out{};
   if (!owner || !pci) {
     out.ioStatus = kIOReturnBadArgument;
