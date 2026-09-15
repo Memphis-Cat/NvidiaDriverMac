@@ -22,16 +22,14 @@ kern_return_t ReadBar(IOPCIDevice* pci,
   const std::uint32_t offset = kPciBar0Offset +
       static_cast<std::uint32_t>(barIndex) * sizeof(std::uint32_t);
   std::uint32_t low = 0u;
-  kr = pci->ConfigurationRead32(offset, &low);
-  if (kr != kIOReturnSuccess) return kr;
+  pci->ConfigurationRead32(offset, &low);
 
   const bool is64Bit = (low & 0x7u) == 0x4u;
   std::uint32_t high = 0u;
   bool highAvailable = false;
   if (is64Bit) {
     if (barIndex == 5u) return kIOReturnUnsupported;
-    kr = pci->ConfigurationRead32(offset + sizeof(std::uint32_t), &high);
-    if (kr != kIOReturnSuccess) return kr;
+    pci->ConfigurationRead32(offset + sizeof(std::uint32_t), &high);
     highAvailable = true;
   }
 
@@ -67,12 +65,9 @@ kern_return_t RTXMacCollectSystemInfo(
   std::uint32_t deviceVendor = 0u;
   std::uint32_t subsystem = 0u;
   std::uint8_t revision = 0u;
-  kr = pci->ConfigurationRead32(kPciDeviceVendorOffset, &deviceVendor);
-  if (kr != kIOReturnSuccess) return kr;
-  kr = pci->ConfigurationRead32(kPciSubsystemOffset, &subsystem);
-  if (kr != kIOReturnSuccess) return kr;
-  kr = pci->ConfigurationRead8(kPciRevisionOffset, &revision);
-  if (kr != kIOReturnSuccess) return kr;
+  pci->ConfigurationRead32(kPciDeviceVendorOffset, &deviceVendor);
+  pci->ConfigurationRead32(kPciSubsystemOffset, &subsystem);
+  pci->ConfigurationRead8(kPciRevisionOffset, &revision);
 
   const std::uint64_t bdf =
       (static_cast<std::uint64_t>(out->bus) << 8u) |
