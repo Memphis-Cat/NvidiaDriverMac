@@ -26,6 +26,9 @@ constexpr DiagnosticRegister kDiagnosticRegisters[] = {
   {"NV_PMC_BOOT_0",                         0x00000000ull},
   {"NV_PMC_BOOT_42",                        0x00000A00ull},
   {"NV_PFB_PRI_MMU_WPR2_ADDR_HI",           0x001FA828ull},
+  {"NV_PFB_PRI_MMU_LOCK_CFG_PRIV_LEVEL_MASK", 0x001FA7C8ull},
+  {"NV_PFB_PRI_MMU_LOCK_ADDR_LO",           0x001FA82Cull},
+  {"NV_PFB_PRI_MMU_LOCK_ADDR_HI",           0x001FA830ull},
   {"NV_PGSP_FALCON_MAILBOX0",               0x00110040ull},
   {"NV_PGSP_FALCON_MAILBOX1",               0x00110044ull},
   {"GSP_NV_PRISCV_RISCV_CPUCTL",            0x00111388ull},
@@ -119,6 +122,25 @@ void LogDiagnosticSnapshot(IOService* owner, IOPCIDevice* pci) {
              reg.name, reg.offset, kr);
     }
   }
+
+  std::uint32_t mmuPlm = 0u, mmuLoReg = 0u, mmuHiReg = 0u;
+  const kern_return_t plmKr = ReadBar0Register(bar0, bar0Size, 0x001FA7C8ull, &mmuPlm);
+  const kern_return_t loKr = ReadBar0Register(bar0, bar0Size, 0x001FA82Cull, &mmuLoReg);
+  const kern_return_t hiKr = ReadBar0Register(bar0, bar0Size, 0x001FA830ull, &mmuHiReg);
+  if (plmKr == kIOReturnSuccess && loKr == kIOReturnSuccess && hiKr == kIOReturnSuccess) {
+    const bool readable = (mmuPlm & 1u) != 0u;
+    const std::uint64_t mmuLo = static_cast<std::uint64_t>(mmuLoReg & 0xFFFFFFF0u) << 8u;
+    const std::uint64_t mmuHi = static_cast<std::uint64_t>(mmuHiReg & 0xFFFFFFF0u) << 8u;
+    const bool valid = readable && mmuHi >= mmuLo;
+    os_log(OS_LOG_DEFAULT,
+           "rtxmac: snapshot MMU-lock readable=%u valid=%u low=0x%llx high=0x%llx",
+           readable ? 1u : 0u, valid ? 1u : 0u, mmuLo, mmuHi);
+  } else {
+    os_log(OS_LOG_DEFAULT,
+           "rtxmac: snapshot MMU-lock decode unavailable plm=0x%x lo=0x%x hi=0x%x",
+           plmKr, loKr, hiKr);
+  }
+
   os_log(OS_LOG_DEFAULT, "rtxmac: snapshot end");
   bar0->release();
 }
@@ -175,8 +197,8 @@ kern_return_t RTXMacDriver::Start_Impl(IOService* provider) {
   // Prototype 1 remains intentionally read-only. Reusable DMA preparation,
   // PRAMIN transactions, reset recovery, Falcon execution, and single-step GSP
   // phase execution are compiled in separate cold modules but are never called
-  // from Start_Impl. The user client added later in the prototype is also
-  // validation-only: package upload does not cause any GPU write or reset.
+  // from Start_Impl. Package validation/staging remains cold and does not cause
+  // any GPU write or reset.
   LogDiagnosticSnapshot(this, ivars->pci);
 
   RegisterService();
