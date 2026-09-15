@@ -13,6 +13,9 @@ enum class SnapshotRegisterId : std::uint8_t {
   PmcBoot0 = 0,
   PmcBoot42,
   Wpr2AddrHi,
+  MmuLockPrivMask,
+  MmuLockAddrLo,
+  MmuLockAddrHi,
   GspMailbox0,
   GspMailbox1,
   GspRiscvCpuCtl,
@@ -30,13 +33,16 @@ struct SnapshotRegisterSpec {
   std::string_view name{};
 };
 
-// Offsets cross-checked against NVIDIA's published GA102/Turing-compatible
-// register headers and tinygrad's generated Ampere register tables.
+// Offsets cross-checked against NVIDIA's published GA100/GA102 Ampere headers
+// and the corresponding tinygrad generated register tables.
 inline constexpr std::array<SnapshotRegisterSpec,
     static_cast<std::size_t>(SnapshotRegisterId::Count)> kDiagnosticRegisters{{
   {SnapshotRegisterId::PmcBoot0,           0x00000000u, "NV_PMC_BOOT_0"},
   {SnapshotRegisterId::PmcBoot42,          0x00000A00u, "NV_PMC_BOOT_42"},
   {SnapshotRegisterId::Wpr2AddrHi,         0x001FA828u, "NV_PFB_PRI_MMU_WPR2_ADDR_HI"},
+  {SnapshotRegisterId::MmuLockPrivMask,    0x001FA7C8u, "NV_PFB_PRI_MMU_LOCK_CFG_PRIV_LEVEL_MASK"},
+  {SnapshotRegisterId::MmuLockAddrLo,      0x001FA82Cu, "NV_PFB_PRI_MMU_LOCK_ADDR_LO"},
+  {SnapshotRegisterId::MmuLockAddrHi,      0x001FA830u, "NV_PFB_PRI_MMU_LOCK_ADDR_HI"},
   {SnapshotRegisterId::GspMailbox0,        0x00110040u, "NV_PGSP_FALCON_MAILBOX0"},
   {SnapshotRegisterId::GspMailbox1,        0x00110044u, "NV_PGSP_FALCON_MAILBOX1"},
   {SnapshotRegisterId::GspRiscvCpuCtl,     0x00111388u, "GSP NV_PRISCV_RISCV_CPUCTL"},
@@ -67,6 +73,13 @@ struct GspCpuCtlState {
   bool halted{};
 };
 
+struct MmuLockState {
+  bool readable{};
+  bool valid{};
+  std::uint64_t low{};
+  std::uint64_t high{};
+};
+
 [[nodiscard]] constexpr GspCpuCtlState DecodeGspCpuCtl(std::uint32_t value) noexcept {
   return {
     .active = ((value >> 7u) & 1u) != 0u,
@@ -74,8 +87,26 @@ struct GspCpuCtlState {
   };
 }
 
+// GA100/GA10x MMU lock registers expose address bits 31:4 and define a 12-bit
+// alignment. Equivalent reconstruction: (register & 0xfffffff0) << 8.
+[[nodiscard]] constexpr MmuLockState DecodeMmuLock(
+    std::uint32_t privilegeMask,
+    std::uint32_t lowRegister,
+    std::uint32_t highRegister) noexcept {
+  const bool readable = (privilegeMask & 0x1u) != 0u;
+  const std::uint64_t low = static_cast<std::uint64_t>(lowRegister & 0xFFFFFFF0u) << 8u;
+  const std::uint64_t high = static_cast<std::uint64_t>(highRegister & 0xFFFFFFF0u) << 8u;
+  return {
+    .readable = readable,
+    .valid = readable && high >= low,
+    .low = low,
+    .high = high,
+  };
+}
+
 [[nodiscard]] DiagnosticSnapshot CaptureDiagnosticSnapshot(ReadOnlyMmio& mmio);
 [[nodiscard]] std::optional<std::uint64_t> VramSizeBytes(const DiagnosticSnapshot& snapshot) noexcept;
 [[nodiscard]] std::optional<GspCpuCtlState> GspCpuCtl(const DiagnosticSnapshot& snapshot) noexcept;
+[[nodiscard]] std::optional<MmuLockState> MmuLock(const DiagnosticSnapshot& snapshot) noexcept;
 
 } // namespace rtxmac::nvidia
