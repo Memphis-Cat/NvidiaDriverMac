@@ -2,6 +2,7 @@
 
 #include "RTXMacDriver.h"
 #include "RTXMacPackageStaging.hpp"
+#include "RTXMacSystemInfo.hpp"
 #include "rtxmac/boot_package.hpp"
 #include "rtxmac/boot_package_policy.hpp"
 
@@ -19,13 +20,15 @@ namespace {
 constexpr std::uint64_t kMaxPackageBytes = 128ull * 1024ull * 1024ull;
 constexpr std::uint32_t kValidationStatusScalarCount = 8u;
 constexpr std::uint32_t kStagingStatusScalarCount = 13u;
+constexpr std::uint32_t kSystemInfoScalarCount = 16u;
 
 enum Selector : std::uint64_t {
   kValidatePackage = 0u,
   kGetValidationStatus = 1u,
   kStagePackage = 2u,
   kGetStagingStatus = 3u,
-  kSelectorCount = 4u,
+  kGetSystemInfo = 4u,
+  kSelectorCount = 5u,
 };
 
 struct ValidationSnapshot {
@@ -185,6 +188,35 @@ void WriteStagingStatus(const RTXMacStagedPackage& staged,
   }
 }
 
+void WriteSystemInfoStatus(kern_return_t ioStatus,
+                           const RTXMacSystemInfoSnapshot& info,
+                           IOUserClientMethodArguments* arguments) noexcept {
+  if (!arguments || !arguments->scalarOutput ||
+      arguments->scalarOutputCount < kSystemInfoScalarCount) return;
+
+  for (std::uint32_t i = 0u; i < kSystemInfoScalarCount; ++i) {
+    arguments->scalarOutput[i] = 0u;
+  }
+  arguments->scalarOutput[0] = ioStatus == kIOReturnSuccess ? 1u : 0u;
+  arguments->scalarOutput[1] = static_cast<std::uint32_t>(ioStatus);
+  if (ioStatus != kIOReturnSuccess) return;
+
+  arguments->scalarOutput[2] = info.inputs.domainBusDeviceFunction;
+  arguments->scalarOutput[3] = info.inputs.pciDeviceIdDword;
+  arguments->scalarOutput[4] = info.inputs.pciSubDeviceIdDword;
+  arguments->scalarOutput[5] = info.inputs.pciRevisionId;
+  arguments->scalarOutput[6] = info.bars[0].decoded.base;
+  arguments->scalarOutput[7] = info.bars[0].size;
+  arguments->scalarOutput[8] = info.bars[1].decoded.base;
+  arguments->scalarOutput[9] = info.bars[1].size;
+  arguments->scalarOutput[10] = info.bars[2].decoded.base;
+  arguments->scalarOutput[11] = info.bars[2].size;
+  arguments->scalarOutput[12] = info.inputs.maxUserVa;
+  arguments->scalarOutput[13] = info.inputs.pciConfigMirrorBase;
+  arguments->scalarOutput[14] = info.inputs.pciConfigMirrorSize;
+  arguments->scalarOutput[15] = info.inputs.passthrough ? 1u : 0u;
+}
+
 void SetRejectedStaging(RTXMacStagedPackage* staged,
                         kern_return_t ioStatus) noexcept {
   if (!staged) return;
@@ -221,6 +253,12 @@ kern_return_t StagingStatusAction(OSObject* target,
   return static_cast<RTXMacUserClient*>(target)->GetStagingStatus(arguments);
 }
 
+kern_return_t SystemInfoAction(OSObject* target,
+                               void*,
+                               IOUserClientMethodArguments* arguments) {
+  return static_cast<RTXMacUserClient*>(target)->GetSystemInfo(arguments);
+}
+
 const IOUserClientMethodDispatch kDispatch[kSelectorCount] = {
     {ValidateAction, false, 0u, kIOUserClientVariableStructureSize,
      kValidationStatusScalarCount, 0u},
@@ -230,6 +268,8 @@ const IOUserClientMethodDispatch kDispatch[kSelectorCount] = {
      kStagingStatusScalarCount, 0u},
     {StagingStatusAction, false, 0u, 0u,
      kStagingStatusScalarCount, 0u},
+    {SystemInfoAction, false, 0u, 0u,
+     kSystemInfoScalarCount, 0u},
 };
 } // namespace
 
@@ -351,5 +391,18 @@ kern_return_t RTXMacUserClient::GetStagingStatus(
     IOUserClientMethodArguments* arguments) {
   if (!ivars || !arguments) return kIOReturnNotReady;
   WriteStagingStatus(ivars->staged, arguments);
+  return kIOReturnSuccess;
+}
+
+kern_return_t RTXMacUserClient::GetSystemInfo(
+    IOUserClientMethodArguments* arguments) {
+  if (!ivars || !ivars->driver || !arguments) return kIOReturnNotReady;
+
+  RTXMacSystemInfoSnapshot info{};
+  IOPCIDevice* pci = ivars->driver->GetPCI();
+  const kern_return_t kr = pci
+      ? RTXMacCollectSystemInfo(pci, &info)
+      : kIOReturnNotReady;
+  WriteSystemInfoStatus(kr, info, arguments);
   return kIOReturnSuccess;
 }
