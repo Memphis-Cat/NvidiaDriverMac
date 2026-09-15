@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rtxmac/boot_package.hpp"
 #include "rtxmac/ga10x_prototype.hpp"
 #include "rtxmac/nvidia_snapshot.hpp"
 
@@ -16,6 +17,15 @@ enum class ReservedBoundaryStatus : std::uint8_t {
   RebuildRequired,
 };
 
+// Minimal live-preflight view of the offline GA10x layout. Keeping this
+// separate from BootManifest lets DriverKit validate the reserved VRAM boundary
+// without linking the full GSP boot-planning dependency graph.
+struct ReservedBoundaryProfile {
+  bool valid{};
+  std::uint64_t vgaWorkspaceOffset{};
+  std::uint64_t vbiosReservedOffset{};
+};
+
 struct ReservedBoundaryDecision {
   ReservedBoundaryStatus status{ReservedBoundaryStatus::InvalidProfile};
   bool activeMmuLock{};
@@ -25,13 +35,17 @@ struct ReservedBoundaryDecision {
   std::uint64_t mmuLockHigh{};
 };
 
-// Decide whether the offline Tinygrad-compatible WPR/FRTS profile is safe for
-// the live GPU. This performs no hardware access itself; it consumes the
-// read-only MMU-lock state captured from BAR0.
-//
-// A valid VBIOS MMU lock below the offline VGA-workspace boundary requires the
-// package/profile to be rebuilt. We deliberately do not adjust only WPR meta:
-// the FRTS command embedded in FWSEC was also patched offline from that layout.
+// Build only the boundary values needed by the read-only live check. This does
+// not construct a BootManifest and performs no hardware access.
+[[nodiscard]] ReservedBoundaryProfile BuildReservedBoundaryProfile(
+    const package::PackageView& package) noexcept;
+
+[[nodiscard]] ReservedBoundaryDecision CheckReservedBoundary(
+    const ReservedBoundaryProfile& profile,
+    const std::optional<MmuLockState>& mmuLock) noexcept;
+
+// Compatibility overload for existing offline callers/tests that already have
+// the full prototype profile.
 [[nodiscard]] ReservedBoundaryDecision CheckReservedBoundary(
     const Profile& profile,
     const std::optional<MmuLockState>& mmuLock) noexcept;
