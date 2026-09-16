@@ -170,6 +170,7 @@ kern_return_t RTXMacStageVerifiedPackage(
   for (std::size_t i = 0u; i < kSectionCount; ++i) {
     out->resolvedBaseAddresses[i] = resolved.allocations[i].baseAddress;
   }
+  out->packageDigest = rtxmac::Sha256(bytes);
 
   out->ready = true;
   out->status = RTXMacPackageStageStatus::Ok;
@@ -203,7 +204,38 @@ void RTXMacReleaseStagedPackage(RTXMacStagedPackage* staged) noexcept {
   staged->totalLogicalBytes = 0u;
   staged->totalAllocationBytes = 0u;
   staged->resolvedTotalPages = 0u;
+  staged->packageDigest.fill(0u);
   staged->resolvedBaseAddresses.fill(0u);
+}
+
+rtxmac::nvidia::package::ResolvedPackageDmaSummary
+RTXMacDescribeStagedPackageDma(
+    const rtxmac::nvidia::package::PackageView& view,
+    const RTXMacStagedPackage& staged) noexcept {
+  using namespace rtxmac::nvidia::package;
+
+  ResolvedPackageDmaSummary out{};
+  if (!staged.ready || staged.status != RTXMacPackageStageStatus::Ok ||
+      view.status != ParseStatus::Ok) {
+    return out;
+  }
+
+  const DmaStagingPlan plan = PlanPackageDmaStaging(view);
+  if (plan.status != DmaStagingPlanStatus::Ok) return out;
+
+  std::array<StagedSectionPhysicalView, kSectionCount> physicalViews{};
+  for (std::size_t i = 0u; i < kSectionCount; ++i) {
+    const RTXMacStagedPackageSection& section = staged.sections[i];
+    physicalViews[i] = {
+        .kind = section.kind,
+        .layout = section.layout,
+        .logicalBytes = section.logicalBytes,
+        .allocationBytes = section.allocationBytes,
+        .pageAddresses = std::span<const std::uint64_t>(
+            section.pageAddresses, section.pageCount),
+    };
+  }
+  return ResolvePackageDmaSummary(plan, physicalViews);
 }
 
 const char* RTXMacPackageStageStatusName(

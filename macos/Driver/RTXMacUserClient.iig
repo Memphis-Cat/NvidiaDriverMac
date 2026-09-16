@@ -22,6 +22,8 @@ public:
   kern_return_t GetStagingStatus(IOUserClientMethodArguments* arguments) LOCALONLY;
   kern_return_t GetSystemInfo(IOUserClientMethodArguments* arguments) LOCALONLY;
   kern_return_t CheckLiveBoundary(IOUserClientMethodArguments* arguments) LOCALONLY;
+  kern_return_t PrepareColdBootSession(IOUserClientMethodArguments* arguments) LOCALONLY;
+  kern_return_t GetColdBootSessionStatus(IOUserClientMethodArguments* arguments) LOCALONLY;
 };
 
 #endif

@@ -4,6 +4,7 @@
 #include "rtxmac/boot_package.hpp"
 #include "rtxmac/package_dma_plan.hpp"
 #include "rtxmac/package_dma_resolve.hpp"
+#include "rtxmac/sha256.hpp"
 
 #include <PCIDriverKit/PCIDriverKit.h>
 
@@ -52,6 +53,7 @@ struct RTXMacStagedPackage {
   std::uint64_t totalLogicalBytes{};
   std::uint64_t totalAllocationBytes{};
   std::uint64_t resolvedTotalPages{};
+  rtxmac::Sha256Digest packageDigest{};
   std::array<std::uint64_t, rtxmac::nvidia::package::kSectionCount>
       resolvedBaseAddresses{};
   std::array<RTXMacStagedPackageSection,
@@ -72,6 +74,13 @@ struct RTXMacStagedPackage {
     RTXMacStagedPackage* out) noexcept;
 
 void RTXMacReleaseStagedPackage(RTXMacStagedPackage* staged) noexcept;
+
+// Reconstruct and revalidate the portable five-section physical summary from
+// the retained DriverKit buffers. No allocation or device access is performed.
+[[nodiscard]] rtxmac::nvidia::package::ResolvedPackageDmaSummary
+RTXMacDescribeStagedPackageDma(
+    const rtxmac::nvidia::package::PackageView& view,
+    const RTXMacStagedPackage& staged) noexcept;
 
 [[nodiscard]] const char* RTXMacPackageStageStatusName(
     RTXMacPackageStageStatus status) noexcept;

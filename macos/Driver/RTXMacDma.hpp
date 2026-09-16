@@ -62,6 +62,11 @@ void RTXMacReleasePreparedDmaBuffer(RTXMacPreparedDmaBuffer* prepared) noexcept;
     const void* source,
     std::uint64_t sourceBytes) noexcept;
 
+// Zero the complete CPU-visible allocation and propagate it to every active
+// DMA mapping. This is used for cold log buffers that must start empty.
+[[nodiscard]] kern_return_t RTXMacZeroPreparedDmaBuffer(
+    const RTXMacPreparedDmaBuffer* prepared) noexcept;
+
 // Synchronize one 32-bit word from the active device DMA mapping back into the
 // original memory descriptor with PerformOperation(Read), then return it.
 [[nodiscard]] kern_return_t RTXMacReadPreparedDmaU32(

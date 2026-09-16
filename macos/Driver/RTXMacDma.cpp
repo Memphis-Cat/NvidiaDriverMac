@@ -324,6 +324,27 @@ kern_return_t RTXMacCopyIntoPreparedDmaBufferPadded(
   return kr;
 }
 
+kern_return_t RTXMacZeroPreparedDmaBuffer(
+    const RTXMacPreparedDmaBuffer* prepared) noexcept {
+  if (!prepared || !prepared->memory || !prepared->chunks ||
+      prepared->length == 0u ||
+      prepared->length > static_cast<std::uint64_t>(~std::size_t{0})) {
+    return kIOReturnBadArgument;
+  }
+
+  IOAddressSegment range{};
+  kern_return_t kr = prepared->memory->GetAddressRange(&range);
+  if (kr != kIOReturnSuccess) return kr;
+  if (range.address == 0u || range.length < prepared->length) {
+    return kIOReturnNoResources;
+  }
+
+  auto* destination = reinterpret_cast<void*>(
+      static_cast<std::uintptr_t>(range.address));
+  std::memset(destination, 0, static_cast<std::size_t>(prepared->length));
+  return SynchronizePreparedWrites(prepared);
+}
+
 kern_return_t RTXMacReadPreparedDmaU32(
     const RTXMacPreparedDmaBuffer* prepared,
     std::uint64_t offset,

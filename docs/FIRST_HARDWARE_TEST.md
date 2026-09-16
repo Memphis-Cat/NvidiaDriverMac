@@ -15,6 +15,8 @@ Prototype 1 must remain read-only with respect to the NVIDIA GPU. It may:
 - read the fixed diagnostic snapshot,
 - validate one `.rtxpkg` against the attached PCI identity,
 - allocate, zero-fill, populate, and `PrepareForDMA()` cold SYSRAM buffers,
+- construct the queue, cached arguments, LIBOS init page, WPR metadata, Radix3 image, and five zeroed log regions,
+- resolve and report the complete cold boot address graph and planned phase count,
 - retain those buffers only while the user-client connection is open,
 - emit logs and collect system metadata.
 
@@ -44,7 +46,7 @@ The current allow-list includes:
 
 This set is intentionally chosen to answer several future bring-up questions in one boot: exact chip identity, whether prior firmware state/WPR2 survived, GSP active/halted state, firmware progress, reported VRAM, and SEC2/GSP mailbox state.
 
-The host app additionally reports the package/live PCI match, prepared DMA page summaries, decoded MMU-lock range, offline prototype boundary, effective live boundary, and whether the package layout must be rebuilt before any future write stage.
+The host app additionally reports the package/live PCI match, prepared DMA page summaries, the complete generated boot-memory graph, artifact/sequence construction status, decoded MMU-lock range, offline prototype boundary, effective live boundary, and whether the package layout must be rebuilt before any future write stage.
 
 ## Gate conditions
 
@@ -53,6 +55,6 @@ Before asking for the first macOS test:
 1. All portable tests run with assertions enabled and are green.
 2. DriverKit and Swift host targets compile on the macOS 26 Intel CI runner.
 3. Exact RTX 3060 Ti PCI/subsystem match is generated from the user's Windows hardware capture.
-4. The host exports its validation, staging, system-info, and boundary results, and the collection script merges that JSON with system logs into one ZIP.
+4. The host exports its validation, staging, cold-session, system-info, and boundary results, and the collection script merges that JSON with system logs into one ZIP.
 5. Signing/activation and recovery steps are documented for the exact test machine.
 6. There is no remaining useful offline work that would materially improve prototype 1.

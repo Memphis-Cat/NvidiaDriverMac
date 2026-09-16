@@ -4,7 +4,7 @@ This directory contains the native DriverKit research transport and host app. It
 
 GitHub CI generates the Xcode project and compile-checks both the DEXT and Swift host on macOS 26 Intel without signing. A real installation still needs the exact target GPU PCI/subsystem identity and the Apple DriverKit signing/entitlement setup for the test machine.
 
-`RTXMacDriver::Start_Impl()` is intentionally read-only. The host can validate a package, prepare cold SYSRAM DMA buffers, read PCI/GSP system information, and run the allow-listed read-only MMU-boundary preflight. It cannot reset the GPU, change PCI command bits, write MMIO/PRAMIN, execute Falcon firmware, or start GSP-RM.
+`RTXMacDriver::Start_Impl()` is intentionally read-only. The host can validate a package, stage its five cold SYSRAM buffers, construct and retain the ten generated GSP boot buffers and their complete address graph, read PCI/GSP system information, and run the allow-listed read-only MMU-boundary preflight. It cannot reset the GPU, change PCI command bits, write MMIO/PRAMIN, execute prepared DMA or Falcon firmware, or start GSP-RM.
 
 For the eventual single-session evidence collection, export `RTXMac-Diagnostics.json` from the host and run:
 

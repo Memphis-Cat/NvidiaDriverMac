@@ -17,7 +17,7 @@ The long-term target is much larger than simple PCI detection: reliable GPU init
 
 ## Current boundary
 
-The repository now contains a portable GA10x boot-planning core, verified firmware package tooling, a macOS 26 Intel DriverKit extension, a Swift host app, cold DriverKit DMA staging, read-only PCI/GSP inspection, a read-only MMU reserved-boundary preflight, and default-off transactional helpers for later PCI/MMIO/PRAMIN/Falcon bring-up.
+The repository now contains a portable GA10x boot-planning core, verified firmware package tooling, a macOS 26 Intel DriverKit extension, a Swift host app, retained cold DriverKit boot-memory construction, read-only PCI/GSP inspection, a read-only MMU reserved-boundary preflight, and default-off transactional helpers for later PCI/MMIO/PRAMIN/Falcon bring-up.
 
 Attaching the DEXT is still read-only. Live GPU reset, MMIO/PRAMIN writes, PCI command changes, Falcon execution, and GSP start are not exposed to the host app and are not run from `Start_Impl()`.
 

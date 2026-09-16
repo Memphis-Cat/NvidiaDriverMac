@@ -32,6 +32,7 @@ private enum UserClientSelector {
     static let stagePackage: UInt32 = 2
     static let systemInfo: UInt32 = 4
     static let liveBoundary: UInt32 = 5
+    static let prepareColdBootSession: UInt32 = 6
 }
 
 struct DriverValidationResult: Sendable {
@@ -175,6 +176,98 @@ struct DriverBoundaryPreflightResult: Sendable {
         return index >= 0 && index < names.count
             ? names[index]
             : "unknown(\(boundaryStatus))"
+    }
+}
+
+struct DriverColdBootSessionResult: Sendable {
+    let ready: Bool
+    let sessionStatus: UInt64
+    let profileStatus: UInt64
+    let planStatus: UInt64
+    let packageResolveStatus: UInt64
+    let bootResolveStatus: UInt64
+    let ioStatus: UInt64
+    let failedGeneratedIndex: UInt64
+    let totalLogicalBytes: UInt64
+    let totalAllocationBytes: UInt64
+    let totalPages: UInt64
+    let queueBacking: UInt64
+    let cachedArguments: UInt64
+    let libosInitArguments: UInt64
+    let wprMetadata: UInt64
+    let radix3FirmwareRoot: UInt64
+    let firmwareSignature: UInt64
+    let gspBootloader: UInt64
+    let frtsFwsecOffset: UInt64
+    let sec2BooterOffset: UInt64
+    let bootPhaseCount: UInt64
+    let executableWithCurrentCore: Bool
+
+    var sessionDescription: String {
+        let names = [
+            "idle", "ok", "bad-argument", "package-not-ready", "package-mismatch",
+            "profile-rejected", "plan-rejected", "package-summary-rejected",
+            "generated-allocation-failed", "page-address-allocation-failed",
+            "page-address-validation-failed", "generated-layout-rejected",
+            "address-resolve-failed", "system-info-failed", "artifact-build-failed",
+            "artifact-population-failed", "sequence-rejected"
+        ]
+        let index = Int(sessionStatus)
+        return index >= 0 && index < names.count ? names[index] : "unknown(\(sessionStatus))"
+    }
+
+    var profileDescription: String {
+        let names = [
+            "ok", "package-not-verified", "unsupported-target", "invalid-vram",
+            "missing-section", "section-too-large", "invalid-metadata", "manifest-rejected"
+        ]
+        let index = Int(profileStatus)
+        return index >= 0 && index < names.count ? names[index] : "unknown(\(profileStatus))"
+    }
+
+    var planDescription: String {
+        let names = [
+            "ok", "invalid-profile", "invalid-manifest", "size-overflow",
+            "framebuffer-scratch-underflow", "frts-placement-mismatch"
+        ]
+        let index = Int(planStatus)
+        return index >= 0 && index < names.count ? names[index] : "unknown(\(planStatus))"
+    }
+
+    var packageResolveDescription: String {
+        let names = [
+            "ok", "bad-plan", "wrong-section-count", "section-mismatch",
+            "bad-allocation-size", "bad-page-count", "bad-page-address",
+            "linear-layout-rejected"
+        ]
+        let index = Int(packageResolveStatus)
+        return index >= 0 && index < names.count ? names[index] : "unknown(\(packageResolveStatus))"
+    }
+
+    var bootResolveDescription: String {
+        let names = [
+            "ok", "bad-profile", "bad-preparation-plan", "bad-staged-package-summary",
+            "wrong-generated-count", "generated-kind-mismatch",
+            "generated-page-count-mismatch", "generated-page-address-invalid",
+            "generated-linear-layout-rejected", "package-reuse-missing",
+            "package-reuse-mismatch"
+        ]
+        let index = Int(bootResolveStatus)
+        return index >= 0 && index < names.count ? names[index] : "unknown(\(bootResolveStatus))"
+    }
+
+    var ioStatusDescription: String {
+        String(format: "0x%08X", UInt32(truncatingIfNeeded: ioStatus))
+    }
+
+    var failedGeneratedDescription: String {
+        if failedGeneratedIndex == UInt64(UInt32.max) { return "—" }
+        let names = [
+            "queue backing", "cached arguments", "LIBOS init arguments", "WPR metadata",
+            "Radix3 firmware", "LOGINIT", "LOGINTR", "LOGRM", "LOGMNOC", "LOGKRNL"
+        ]
+        let index = Int(failedGeneratedIndex)
+        return index >= 0 && index < names.count ? names[index] : "index \(failedGeneratedIndex)"
     }
 }
 
@@ -458,6 +551,41 @@ private func checkLiveBoundaryWithDriver(
     )
 }
 
+private func prepareColdBootSessionWithDriver(
+    _ data: Data,
+    session: RTXMacDriverSession
+) throws -> DriverColdBootSessionResult {
+    let output = try session.callPackageMethod(
+        data,
+        selector: UserClientSelector.prepareColdBootSession,
+        expectedOutputCount: 22
+    )
+    return DriverColdBootSessionResult(
+        ready: output[0] != 0,
+        sessionStatus: output[1],
+        profileStatus: output[2],
+        planStatus: output[3],
+        packageResolveStatus: output[4],
+        bootResolveStatus: output[5],
+        ioStatus: output[6],
+        failedGeneratedIndex: output[7],
+        totalLogicalBytes: output[8],
+        totalAllocationBytes: output[9],
+        totalPages: output[10],
+        queueBacking: output[11],
+        cachedArguments: output[12],
+        libosInitArguments: output[13],
+        wprMetadata: output[14],
+        radix3FirmwareRoot: output[15],
+        firmwareSignature: output[16],
+        gspBootloader: output[17],
+        frtsFwsecOffset: output[18],
+        sec2BooterOffset: output[19],
+        bootPhaseCount: output[20],
+        executableWithCurrentCore: output[21] != 0
+    )
+}
+
 @MainActor
 final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDelegate {
     @Published var status = "Driver not activated by this app yet."
@@ -475,6 +603,9 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
     @Published var checkingBoundary = false
     @Published var boundaryStatus = "Live MMU boundary has not been checked."
     @Published var boundaryResult: DriverBoundaryPreflightResult?
+    @Published var preparingBootSession = false
+    @Published var bootSessionStatus = "Cold boot session has not been prepared."
+    @Published var bootSessionResult: DriverColdBootSessionResult?
 
     private var selectedPackageData: Data?
     private var stagedSession: RTXMacDriverSession?
@@ -526,6 +657,8 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
         stagingStatus = "Package is not staged."
         boundaryResult = nil
         boundaryStatus = "Live MMU boundary has not been checked."
+        bootSessionResult = nil
+        bootSessionStatus = "Cold boot session has not been prepared."
 
         Task.detached(priority: .userInitiated) {
             do {
@@ -572,6 +705,8 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
         stagingResult = nil
         stagingStatus = "Allocating, zero-padding, populating, and preparing SYSRAM DMA buffers…"
         stagedSession = nil
+        bootSessionResult = nil
+        bootSessionStatus = "Cold boot session has not been prepared."
 
         Task.detached(priority: .userInitiated) {
             do {
@@ -593,6 +728,38 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
                     self.stagingResult = nil
                     self.stagedSession = nil
                     self.stagingStatus = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func prepareSelectedColdBootSession() {
+        guard let data = selectedPackageData,
+              let session = stagedSession,
+              stagingResult?.ready == true else {
+            bootSessionStatus = "Stage the accepted .rtxpkg before preparing the cold boot session."
+            return
+        }
+
+        preparingBootSession = true
+        bootSessionResult = nil
+        bootSessionStatus = "Allocating generated DMA buffers and constructing cold boot artifacts…"
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try prepareColdBootSessionWithDriver(data, session: session)
+                await MainActor.run {
+                    self.preparingBootSession = false
+                    self.bootSessionResult = result
+                    self.bootSessionStatus = result.ready
+                        ? "Cold host-memory graph is retained and internally consistent. Hardware execution remains disabled."
+                        : "Cold boot preparation failed: \(result.sessionDescription), I/O \(result.ioStatusDescription)."
+                }
+            } catch {
+                await MainActor.run {
+                    self.preparingBootSession = false
+                    self.bootSessionResult = nil
+                    self.bootSessionStatus = error.localizedDescription
                 }
             }
         }
@@ -642,6 +809,8 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
         stagingStatus = "Package is not staged."
         boundaryResult = nil
         boundaryStatus = "Live MMU boundary has not been checked."
+        bootSessionResult = nil
+        bootSessionStatus = "Cold boot session has not been prepared."
     }
 
     func makeDiagnosticReportDocument() -> RTXMacDiagnosticDocument {
@@ -654,6 +823,7 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
             "package_name": packageName,
             "package_status": packageStatus,
             "staging_status": stagingStatus,
+            "boot_session_status": bootSessionStatus,
             "boundary_status": boundaryStatus,
         ]
 
@@ -716,6 +886,33 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
                 "effective_boundary": describeHex(result.effectiveBoundary),
                 "mmu_lock_low": describeHex(result.mmuLockLow),
                 "mmu_lock_high": describeHex(result.mmuLockHigh),
+            ] as [String: Any]
+        }
+
+        if let result = bootSessionResult {
+            report["cold_boot_session"] = [
+                "ready": result.ready,
+                "session_status": result.sessionDescription,
+                "profile_status": result.profileDescription,
+                "preparation_plan_status": result.planDescription,
+                "package_dma_resolve_status": result.packageResolveDescription,
+                "boot_address_resolve_status": result.bootResolveDescription,
+                "io_status": result.ioStatusDescription,
+                "failed_generated_buffer": result.failedGeneratedDescription,
+                "logical_bytes": result.totalLogicalBytes,
+                "allocation_bytes": result.totalAllocationBytes,
+                "page_count": result.totalPages,
+                "queue_backing": describeDmaAddress(result.queueBacking),
+                "cached_arguments": describeDmaAddress(result.cachedArguments),
+                "libos_init_arguments": describeDmaAddress(result.libosInitArguments),
+                "wpr_metadata": describeDmaAddress(result.wprMetadata),
+                "radix3_firmware_root": describeDmaAddress(result.radix3FirmwareRoot),
+                "firmware_signature": describeDmaAddress(result.firmwareSignature),
+                "gsp_bootloader": describeDmaAddress(result.gspBootloader),
+                "frts_fwsec_vram_offset": describeHex(result.frtsFwsecOffset),
+                "sec2_booter_vram_offset": describeHex(result.sec2BooterOffset),
+                "planned_boot_phases": result.bootPhaseCount,
+                "sequence_supported_by_current_core": result.executableWithCurrentCore,
             ] as [String: Any]
         }
 
@@ -827,7 +1024,10 @@ private struct RTXMacContentView: View {
                             Button(extensions.validating ? "Validating…" : "Select .rtxpkg and validate") {
                                 importingPackage = true
                             }
-                            .disabled(extensions.validating || extensions.staging)
+                            .disabled(
+                                extensions.validating || extensions.staging ||
+                                extensions.preparingBootSession
+                            )
 
                             Text(extensions.packageName)
                                 .foregroundStyle(.secondary)
@@ -880,7 +1080,10 @@ private struct RTXMacContentView: View {
                         Button(extensions.staging ? "Staging…" : "Stage verified package in SYSRAM") {
                             extensions.stageSelectedPackage()
                         }
-                        .disabled(!extensions.canStage || extensions.staging || extensions.validating)
+                        .disabled(
+                            !extensions.canStage || extensions.staging || extensions.validating ||
+                            extensions.preparingBootSession
+                        )
 
                         Text(extensions.stagingStatus)
                             .textSelection(.enabled)
@@ -904,6 +1107,59 @@ private struct RTXMacContentView: View {
                             .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)
                         }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                GroupBox("Retained cold boot preparation") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button(
+                            extensions.preparingBootSession
+                                ? "Preparing cold boot session…"
+                                : "Build complete cold host-memory graph"
+                        ) {
+                            extensions.prepareSelectedColdBootSession()
+                        }
+                        .disabled(
+                            extensions.stagingResult?.ready != true ||
+                            extensions.preparingBootSession || extensions.staging ||
+                            extensions.validating
+                        )
+
+                        Text(extensions.bootSessionStatus)
+                            .textSelection(.enabled)
+
+                        if let result = extensions.bootSessionResult {
+                            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                                GridRow { Text("Ready"); Text(result.ready ? "YES" : "NO") }
+                                GridRow { Text("Session status"); Text(result.sessionDescription) }
+                                GridRow { Text("GA104 profile"); Text(result.profileDescription) }
+                                GridRow { Text("Preparation plan"); Text(result.planDescription) }
+                                GridRow { Text("Package DMA resolve"); Text(result.packageResolveDescription) }
+                                GridRow { Text("Boot address resolve"); Text(result.bootResolveDescription) }
+                                GridRow { Text("Driver I/O"); Text(result.ioStatusDescription) }
+                                GridRow { Text("Failed generated buffer"); Text(result.failedGeneratedDescription) }
+                                GridRow { Text("Logical / allocated bytes"); Text("\(result.totalLogicalBytes) / \(result.totalAllocationBytes)") }
+                                GridRow { Text("Generated DMA pages"); Text("\(result.totalPages)") }
+                                GridRow { Text("Queue backing"); Text(describeDmaAddress(result.queueBacking)) }
+                                GridRow { Text("Cached arguments"); Text(describeDmaAddress(result.cachedArguments)) }
+                                GridRow { Text("LIBOS init arguments"); Text(describeDmaAddress(result.libosInitArguments)) }
+                                GridRow { Text("WPR metadata"); Text(describeDmaAddress(result.wprMetadata)) }
+                                GridRow { Text("Radix3 firmware root"); Text(describeDmaAddress(result.radix3FirmwareRoot)) }
+                                GridRow { Text("Staged signature"); Text(describeDmaAddress(result.firmwareSignature)) }
+                                GridRow { Text("Staged bootloader"); Text(describeDmaAddress(result.gspBootloader)) }
+                                GridRow { Text("FWSEC VRAM offset"); Text(describeHex(result.frtsFwsecOffset)) }
+                                GridRow { Text("SEC2 VRAM offset"); Text(describeHex(result.sec2BooterOffset)) }
+                                GridRow { Text("Planned phases"); Text("\(result.bootPhaseCount)") }
+                                GridRow { Text("Core sequence complete"); Text(result.executableWithCurrentCore ? "YES" : "NO") }
+                            }
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                        }
+
+                        Text("This allocates and fills queue, arguments, metadata, Radix3, and log buffers. Ready means internally consistent—not armed. It performs no PCI command change, MMIO/PRAMIN write, reset, Falcon execution, or GSP start.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

@@ -34,7 +34,11 @@ targets:
       - path: src/core/boot_package_policy.cpp
       - path: src/core/package_dma_plan.cpp
       - path: src/core/package_dma_resolve.cpp
+      - path: src/core/dma.cpp
+      - path: src/core/ga10x_prototype.cpp
       - path: src/core/ga10x_live_preflight.cpp
+      - path: src/core/ga10x_boot_prepare.cpp
+      - path: src/core/ga10x_boot_resolve.cpp
       - path: src/core/sha256.cpp
       - path: src/core/pci_identity_policy.cpp
       - path: src/core/pci_bar.cpp
@@ -42,6 +46,14 @@ targets:
       - path: src/core/nvfw.cpp
       - path: src/core/vbios.cpp
       - path: src/core/frts.cpp
+      - path: src/core/pramin.cpp
+      - path: src/core/gsp_rpc.cpp
+      - path: src/core/gsp_boot.cpp
+      - path: src/core/gsp_bootstrap.cpp
+      - path: src/core/gsp_metadata.cpp
+      - path: src/core/gsp_radix3.cpp
+      - path: src/core/gsp_manifest.cpp
+      - path: src/core/falcon_plan.cpp
     dependencies:
       - sdk: DriverKit.framework
       - sdk: PCIDriverKit.framework

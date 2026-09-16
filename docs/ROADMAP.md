@@ -25,6 +25,8 @@ The host app can collect these results in one macOS session:
 - [x] Validate a `.rtxpkg` and match its PCI identity to the attached GPU
 - [x] Read PCI identity, revision, BDF, BAR metadata, and GSP system-info inputs
 - [x] Allocate/populate/prepare the five verified package DMA buffers without GPU execution
+- [x] Allocate the ten generated DMA buffers and build the complete queue/arguments/WPR/Radix3/log artifact graph
+- [x] Bind retained package and generated state to the exact package SHA-256 for the life of one user-client connection
 - [x] Map one allow-listed BAR0 page read-only and capture the GA10x MMU lock
 - [x] Compare the live MMU lock against the offline VRAM reserved boundary
 - [x] Show `ok`, unreadable/unavailable, or `rebuild-required` without changing hardware state
@@ -44,7 +46,7 @@ Most mechanisms exist but are intentionally not wired to a user-client selector:
 - [x] Phase executor, time bounds, and phase-level recovery policy
 - [x] Conservative PCI reset/recovery and post-reset checks
 - [ ] Bind the live boundary result to the final boot manifest
-- [ ] Build the generated DriverKit DMA allocations and resolved artifacts as one retained session
+- [x] Build the generated DriverKit DMA allocations and resolved artifacts as one retained session
 - [ ] Add an explicit experimental arming contract that cannot be enabled accidentally
 - [ ] Connect only the audited cold sequence, with failure capture and controlled recovery
 - [ ] Establish GSP-RM host RPC on the RTX 3060 Ti

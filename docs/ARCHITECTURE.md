@@ -16,7 +16,9 @@ The core includes read-only MMIO abstractions, package validation, DMA-layout va
 
 ### 3. macOS PCI transport (DriverKit)
 
-A PCIDriverKit system extension owns the target NVIDIA PCI function and provides the hardware implementation of the portable transport. Its attach path is deliberately read-only. The user client currently exposes package validation, cold SYSRAM staging, PCI/GSP system information, and a read-only MMU reserved-boundary check.
+A PCIDriverKit system extension owns the target NVIDIA PCI function and provides the hardware implementation of the portable transport. Its attach path is deliberately read-only. The user client currently exposes package validation, cold SYSRAM staging, retained construction of all generated GSP boot artifacts, PCI/GSP system information, and a read-only MMU reserved-boundary check.
+
+The retained cold session owns ten generated DMA allocations: queue backing, cached arguments, LIBOS init arguments, WPR metadata, a Radix3 firmware allocation, and five log regions. It resolves these together with the staged package signature and bootloader, then fills the complete host-memory graph. The session is SHA-256-bound to the exact staged package and is released when its user-client connection closes. This state is prepared but never armed or submitted.
 
 ### 4. Ampere bring-up runtime
 
@@ -44,4 +46,4 @@ Future work and currently the largest unknown: modesetting/scanout, framebuffer 
 
 ## First macOS prototype
 
-The first prototype is deliberately boring: attach to the exact GPU, validate the package, collect PCI/GSP system information, prepare cold SYSRAM DMA buffers, and read the allow-listed MMU-lock page. It must produce one self-contained diagnostic bundle for analysis back on Windows and must not reset or start the GPU.
+The first prototype is deliberately boring: attach to the exact GPU, validate the package, collect PCI/GSP system information, construct the complete cold host-memory graph, and read the allow-listed MMU-lock page. It must produce one self-contained diagnostic bundle for analysis back on Windows and must not reset or start the GPU.

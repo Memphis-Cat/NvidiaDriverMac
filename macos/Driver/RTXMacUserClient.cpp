@@ -1,6 +1,8 @@
 #include "RTXMacUserClient.h"
 
 #include "RTXMacDriver.h"
+
+#include "RTXMacBootSession.hpp"
 #include "RTXMacLivePreflight.hpp"
 #include "RTXMacPackageStaging.hpp"
 #include "RTXMacSystemInfo.hpp"
@@ -24,6 +26,7 @@ constexpr std::uint32_t kValidationStatusScalarCount = 8u;
 constexpr std::uint32_t kStagingStatusScalarCount = 13u;
 constexpr std::uint32_t kSystemInfoScalarCount = 16u;
 constexpr std::uint32_t kBoundaryPreflightScalarCount = 11u;
+constexpr std::uint32_t kBootSessionStatusScalarCount = 22u;
 
 enum Selector : std::uint64_t {
   kValidatePackage = 0u,
@@ -32,7 +35,9 @@ enum Selector : std::uint64_t {
   kGetStagingStatus = 3u,
   kGetSystemInfo = 4u,
   kCheckLiveBoundary = 5u,
-  kSelectorCount = 6u,
+  kPrepareColdBootSession = 6u,
+  kGetColdBootSessionStatus = 7u,
+  kSelectorCount = 8u,
 };
 
 struct ValidationSnapshot {
@@ -250,6 +255,41 @@ void WriteBoundaryPreflightStatus(
   arguments->scalarOutput[10] = live.decision.mmuLockHigh;
 }
 
+void WriteBootSessionStatus(const RTXMacColdBootSession& session,
+                            IOUserClientMethodArguments* arguments) noexcept {
+  if (!arguments || !arguments->scalarOutput ||
+      arguments->scalarOutputCount < kBootSessionStatusScalarCount) return;
+
+  for (std::uint32_t i = 0u; i < kBootSessionStatusScalarCount; ++i) {
+    arguments->scalarOutput[i] = 0u;
+  }
+  arguments->scalarOutput[0] = session.ready ? 1u : 0u;
+  arguments->scalarOutput[1] = static_cast<std::uint32_t>(session.status);
+  arguments->scalarOutput[2] = static_cast<std::uint32_t>(session.profileStatus);
+  arguments->scalarOutput[3] = static_cast<std::uint32_t>(session.planStatus);
+  arguments->scalarOutput[4] =
+      static_cast<std::uint32_t>(session.packageResolveStatus);
+  arguments->scalarOutput[5] =
+      static_cast<std::uint32_t>(session.bootResolveStatus);
+  arguments->scalarOutput[6] = static_cast<std::uint32_t>(session.ioStatus);
+  arguments->scalarOutput[7] = session.failedGeneratedIndex;
+  arguments->scalarOutput[8] = session.totalLogicalBytes;
+  arguments->scalarOutput[9] = session.totalAllocationBytes;
+  arguments->scalarOutput[10] = session.totalPages;
+  arguments->scalarOutput[11] = session.addresses.queueBacking;
+  arguments->scalarOutput[12] = session.addresses.cachedArguments;
+  arguments->scalarOutput[13] = session.addresses.libosInitArguments;
+  arguments->scalarOutput[14] = session.addresses.wprMetadata;
+  arguments->scalarOutput[15] = session.addresses.radix3FirmwareRoot;
+  arguments->scalarOutput[16] = session.addresses.firmwareSignature;
+  arguments->scalarOutput[17] = session.addresses.gspBootloader;
+  arguments->scalarOutput[18] = session.addresses.frtsFwsecImage;
+  arguments->scalarOutput[19] = session.addresses.sec2BooterImage;
+  arguments->scalarOutput[20] = session.bootPhaseCount;
+  arguments->scalarOutput[21] =
+      session.executableWithCurrentCore ? 1u : 0u;
+}
+
 void SetRejectedStaging(RTXMacStagedPackage* staged,
                         kern_return_t ioStatus) noexcept {
   if (!staged) return;
@@ -260,6 +300,14 @@ void SetRejectedStaging(RTXMacStagedPackage* staged,
       rtxmac::nvidia::package::DmaStagingPlanStatus::PackageNotVerified;
   staged->ioStatus = ioStatus;
   staged->failedSectionIndex = 0xFFFFFFFFu;
+}
+
+void SetRejectedBootSession(RTXMacColdBootSession* session,
+                            kern_return_t ioStatus) noexcept {
+  if (!session) return;
+  RTXMacReleaseColdBootSession(session);
+  session->status = RTXMacBootSessionStatus::BadArgument;
+  session->ioStatus = ioStatus;
 }
 
 kern_return_t ValidateAction(OSObject* target,
@@ -298,6 +346,20 @@ kern_return_t BoundaryPreflightAction(OSObject* target,
   return static_cast<RTXMacUserClient*>(target)->CheckLiveBoundary(arguments);
 }
 
+kern_return_t PrepareColdBootSessionAction(
+    OSObject* target,
+    void*,
+    IOUserClientMethodArguments* arguments) {
+  return static_cast<RTXMacUserClient*>(target)->PrepareColdBootSession(arguments);
+}
+
+kern_return_t ColdBootSessionStatusAction(
+    OSObject* target,
+    void*,
+    IOUserClientMethodArguments* arguments) {
+  return static_cast<RTXMacUserClient*>(target)->GetColdBootSessionStatus(arguments);
+}
+
 const IOUserClientMethodDispatch kDispatch[kSelectorCount] = {
     {ValidateAction, false, 0u, kIOUserClientVariableStructureSize,
      kValidationStatusScalarCount, 0u},
@@ -311,6 +373,10 @@ const IOUserClientMethodDispatch kDispatch[kSelectorCount] = {
      kSystemInfoScalarCount, 0u},
     {BoundaryPreflightAction, false, 0u, kIOUserClientVariableStructureSize,
      kBoundaryPreflightScalarCount, 0u},
+    {PrepareColdBootSessionAction, false, 0u, kIOUserClientVariableStructureSize,
+     kBootSessionStatusScalarCount, 0u},
+    {ColdBootSessionStatusAction, false, 0u, 0u,
+     kBootSessionStatusScalarCount, 0u},
 };
 } // namespace
 
@@ -318,6 +384,7 @@ struct RTXMacUserClient_IVars {
   RTXMacDriver* driver{nullptr};
   ValidationSnapshot validation{};
   RTXMacStagedPackage staged{};
+  RTXMacColdBootSession bootSession{};
 };
 
 bool RTXMacUserClient::init() {
@@ -327,7 +394,10 @@ bool RTXMacUserClient::init() {
 }
 
 void RTXMacUserClient::free() {
-  if (ivars) RTXMacReleaseStagedPackage(&ivars->staged);
+  if (ivars) {
+    RTXMacReleaseColdBootSession(&ivars->bootSession);
+    RTXMacReleaseStagedPackage(&ivars->staged);
+  }
   IOSafeDeleteNULL(ivars, RTXMacUserClient_IVars, 1);
   super::free();
 }
@@ -350,6 +420,7 @@ kern_return_t RTXMacUserClient::Start_Impl(IOService* provider) {
 
 kern_return_t RTXMacUserClient::Stop_Impl(IOService* provider) {
   if (ivars) {
+    RTXMacReleaseColdBootSession(&ivars->bootSession);
     RTXMacReleaseStagedPackage(&ivars->staged);
     ivars->driver = nullptr;
   }
@@ -407,6 +478,7 @@ kern_return_t RTXMacUserClient::StagePackage(
       ivars->driver, bytes, &view);
 
   if (!ivars->validation.accepted) {
+    RTXMacReleaseColdBootSession(&ivars->bootSession);
     SetRejectedStaging(&ivars->staged, kIOReturnBadArgument);
     WriteStagingStatus(ivars->staged, arguments);
     ReleaseInput(&input);
@@ -415,12 +487,14 @@ kern_return_t RTXMacUserClient::StagePackage(
 
   IOPCIDevice* pci = ivars->driver->GetPCI();
   if (!pci) {
+    RTXMacReleaseColdBootSession(&ivars->bootSession);
     SetRejectedStaging(&ivars->staged, kIOReturnNotReady);
     WriteStagingStatus(ivars->staged, arguments);
     ReleaseInput(&input);
     return kIOReturnSuccess;
   }
 
+  RTXMacReleaseColdBootSession(&ivars->bootSession);
   (void)RTXMacStageVerifiedPackage(
       pci, bytes, view, &ivars->staged);
   WriteStagingStatus(ivars->staged, arguments);
@@ -481,5 +555,48 @@ kern_return_t RTXMacUserClient::CheckLiveBoundary(
   WriteBoundaryPreflightStatus(
       ivars->validation.accepted, profile, live, arguments);
   ReleaseInput(&input);
+  return kIOReturnSuccess;
+}
+
+
+kern_return_t RTXMacUserClient::PrepareColdBootSession(
+    IOUserClientMethodArguments* arguments) {
+  using namespace rtxmac::nvidia::package;
+  if (!ivars || !ivars->driver || !arguments) return kIOReturnNotReady;
+
+  InputView input{};
+  const kern_return_t inputKr = MakeInputView(arguments, &input);
+  if (inputKr != kIOReturnSuccess) return inputKr;
+
+  const std::span<const std::uint8_t> bytes(input.bytes, input.size);
+  PackageView view{};
+  ivars->validation = ValidateBytesAgainstLiveGPU(
+      ivars->driver, bytes, &view);
+  if (!ivars->validation.accepted) {
+    SetRejectedBootSession(&ivars->bootSession, kIOReturnBadArgument);
+    WriteBootSessionStatus(ivars->bootSession, arguments);
+    ReleaseInput(&input);
+    return kIOReturnSuccess;
+  }
+
+  IOPCIDevice* pci = ivars->driver->GetPCI();
+  if (!pci) {
+    SetRejectedBootSession(&ivars->bootSession, kIOReturnNotReady);
+    WriteBootSessionStatus(ivars->bootSession, arguments);
+    ReleaseInput(&input);
+    return kIOReturnSuccess;
+  }
+
+  (void)RTXMacPrepareColdBootSession(
+      pci, bytes, view, ivars->staged, &ivars->bootSession);
+  WriteBootSessionStatus(ivars->bootSession, arguments);
+  ReleaseInput(&input);
+  return kIOReturnSuccess;
+}
+
+kern_return_t RTXMacUserClient::GetColdBootSessionStatus(
+    IOUserClientMethodArguments* arguments) {
+  if (!ivars || !arguments) return kIOReturnNotReady;
+  WriteBootSessionStatus(ivars->bootSession, arguments);
   return kIOReturnSuccess;
 }
