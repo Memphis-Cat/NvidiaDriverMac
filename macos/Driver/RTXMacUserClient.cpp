@@ -1,7 +1,6 @@
 #include "RTXMacUserClient.h"
 
 #include "RTXMacDriver.h"
-
 #include "RTXMacBootSession.hpp"
 #include "RTXMacLivePreflight.hpp"
 #include "RTXMacPackageStaging.hpp"
@@ -26,7 +25,7 @@ constexpr std::uint32_t kValidationStatusScalarCount = 8u;
 constexpr std::uint32_t kStagingStatusScalarCount = 13u;
 constexpr std::uint32_t kSystemInfoScalarCount = 16u;
 constexpr std::uint32_t kBoundaryPreflightScalarCount = 11u;
-constexpr std::uint32_t kBootSessionStatusScalarCount = 22u;
+constexpr std::uint32_t kBootSessionStatusScalarCount = 27u;
 
 enum Selector : std::uint64_t {
   kValidatePackage = 0u,
@@ -288,6 +287,12 @@ void WriteBootSessionStatus(const RTXMacColdBootSession& session,
   arguments->scalarOutput[20] = session.bootPhaseCount;
   arguments->scalarOutput[21] =
       session.executableWithCurrentCore ? 1u : 0u;
+  arguments->scalarOutput[22] =
+      static_cast<std::uint32_t>(session.boundaryStatus);
+  arguments->scalarOutput[23] = session.boundaryRebuilt ? 1u : 0u;
+  arguments->scalarOutput[24] = session.prototypeBoundary;
+  arguments->scalarOutput[25] = session.effectiveBoundary;
+  arguments->scalarOutput[26] = session.activeMmuLock ? 1u : 0u;
 }
 
 void SetRejectedStaging(RTXMacStagedPackage* staged,
@@ -558,7 +563,6 @@ kern_return_t RTXMacUserClient::CheckLiveBoundary(
   return kIOReturnSuccess;
 }
 
-
 kern_return_t RTXMacUserClient::PrepareColdBootSession(
     IOUserClientMethodArguments* arguments) {
   using namespace rtxmac::nvidia::package;
@@ -587,8 +591,18 @@ kern_return_t RTXMacUserClient::PrepareColdBootSession(
     return kIOReturnSuccess;
   }
 
+  const auto boundaryProfile =
+      rtxmac::nvidia::prototype::BuildReservedBoundaryProfile(view);
+  RTXMacLiveBoundaryPreflight liveBoundary{};
+  liveBoundary.ioStatus = kIOReturnBadArgument;
+  if (boundaryProfile.valid) {
+    liveBoundary = RTXMacCheckLiveReservedBoundary(
+        ivars->driver, pci, boundaryProfile);
+  }
+
   (void)RTXMacPrepareColdBootSession(
-      pci, bytes, view, ivars->staged, &ivars->bootSession);
+      pci, bytes, view, ivars->staged, liveBoundary,
+      &ivars->bootSession);
   WriteBootSessionStatus(ivars->bootSession, arguments);
   ReleaseInput(&input);
   return kIOReturnSuccess;

@@ -16,6 +16,7 @@ Prototype 1 must remain read-only with respect to the NVIDIA GPU. It may:
 - validate one `.rtxpkg` against the attached PCI identity,
 - allocate, zero-fill, populate, and `PrepareForDMA()` cold SYSRAM buffers,
 - construct the queue, cached arguments, LIBOS init page, WPR metadata, Radix3 image, and five zeroed log regions,
+- rebuild the manifest around a lower live MMU boundary when necessary,
 - resolve and report the complete cold boot address graph and planned phase count,
 - retain those buffers only while the user-client connection is open,
 - emit logs and collect system metadata.
@@ -46,7 +47,7 @@ The current allow-list includes:
 
 This set is intentionally chosen to answer several future bring-up questions in one boot: exact chip identity, whether prior firmware state/WPR2 survived, GSP active/halted state, firmware progress, reported VRAM, and SEC2/GSP mailbox state.
 
-The host app additionally reports the package/live PCI match, prepared DMA page summaries, the complete generated boot-memory graph, artifact/sequence construction status, decoded MMU-lock range, offline prototype boundary, effective live boundary, and whether the package layout must be rebuilt before any future write stage.
+The host app additionally reports the package/live PCI match, prepared DMA page summaries, the complete generated boot-memory graph, artifact/sequence construction status, decoded MMU-lock range, offline prototype boundary, effective live boundary, and whether the retained layout was rebuilt around that boundary.
 
 ## Gate conditions
 

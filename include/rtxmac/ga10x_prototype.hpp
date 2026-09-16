@@ -28,6 +28,7 @@ enum class ProfileStatus : std::uint8_t {
   SectionTooLarge,
   InvalidMetadata,
   ManifestRejected,
+  InvalidReservedBoundary,
 };
 
 struct Profile {
@@ -46,6 +47,13 @@ struct Profile {
 // live preflight must prove that assumption before writes are permitted.
 [[nodiscard]] Profile BuildGa10xPrototypeProfile(
     const package::PackageView& package) noexcept;
+
+// Rebuild the GA10x layout around a live, page-aligned VBIOS/MMU reserved
+// boundary. The VGA workspace remains fixed at the top 1 MiB of VRAM; the
+// supplied boundary must not extend into it. This performs no hardware access.
+[[nodiscard]] Profile BuildGa10xPrototypeProfile(
+    const package::PackageView& package,
+    std::uint64_t vbiosReservedOffset) noexcept;
 
 [[nodiscard]] const char* ProfileStatusName(ProfileStatus status) noexcept;
 

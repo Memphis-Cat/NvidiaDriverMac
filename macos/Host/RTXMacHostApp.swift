@@ -202,6 +202,11 @@ struct DriverColdBootSessionResult: Sendable {
     let sec2BooterOffset: UInt64
     let bootPhaseCount: UInt64
     let executableWithCurrentCore: Bool
+    let boundaryStatus: UInt64
+    let boundaryRebuilt: Bool
+    let prototypeBoundary: UInt64
+    let effectiveBoundary: UInt64
+    let activeMmuLock: Bool
 
     var sessionDescription: String {
         let names = [
@@ -210,7 +215,7 @@ struct DriverColdBootSessionResult: Sendable {
             "generated-allocation-failed", "page-address-allocation-failed",
             "page-address-validation-failed", "generated-layout-rejected",
             "address-resolve-failed", "system-info-failed", "artifact-build-failed",
-            "artifact-population-failed", "sequence-rejected"
+            "artifact-population-failed", "sequence-rejected", "boundary-rejected"
         ]
         let index = Int(sessionStatus)
         return index >= 0 && index < names.count ? names[index] : "unknown(\(sessionStatus))"
@@ -219,7 +224,8 @@ struct DriverColdBootSessionResult: Sendable {
     var profileDescription: String {
         let names = [
             "ok", "package-not-verified", "unsupported-target", "invalid-vram",
-            "missing-section", "section-too-large", "invalid-metadata", "manifest-rejected"
+            "missing-section", "section-too-large", "invalid-metadata", "manifest-rejected",
+            "invalid-reserved-boundary"
         ]
         let index = Int(profileStatus)
         return index >= 0 && index < names.count ? names[index] : "unknown(\(profileStatus))"
@@ -268,6 +274,15 @@ struct DriverColdBootSessionResult: Sendable {
         ]
         let index = Int(failedGeneratedIndex)
         return index >= 0 && index < names.count ? names[index] : "index \(failedGeneratedIndex)"
+    }
+
+    var boundaryDescription: String {
+        let names = [
+            "ok", "invalid-profile", "mmu-lock-unavailable",
+            "mmu-lock-unreadable", "rebuild-required"
+        ]
+        let index = Int(boundaryStatus)
+        return index >= 0 && index < names.count ? names[index] : "unknown(\(boundaryStatus))"
     }
 }
 
@@ -558,7 +573,7 @@ private func prepareColdBootSessionWithDriver(
     let output = try session.callPackageMethod(
         data,
         selector: UserClientSelector.prepareColdBootSession,
-        expectedOutputCount: 22
+        expectedOutputCount: 27
     )
     return DriverColdBootSessionResult(
         ready: output[0] != 0,
@@ -582,7 +597,12 @@ private func prepareColdBootSessionWithDriver(
         frtsFwsecOffset: output[18],
         sec2BooterOffset: output[19],
         bootPhaseCount: output[20],
-        executableWithCurrentCore: output[21] != 0
+        executableWithCurrentCore: output[21] != 0,
+        boundaryStatus: output[22],
+        boundaryRebuilt: output[23] != 0,
+        prototypeBoundary: output[24],
+        effectiveBoundary: output[25],
+        activeMmuLock: output[26] != 0
     )
 }
 
@@ -752,7 +772,9 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
                     self.preparingBootSession = false
                     self.bootSessionResult = result
                     self.bootSessionStatus = result.ready
-                        ? "Cold host-memory graph is retained and internally consistent. Hardware execution remains disabled."
+                        ? (result.boundaryRebuilt
+                            ? "Cold host-memory graph was rebuilt around the live MMU boundary and retained. Hardware execution remains disabled."
+                            : "Cold host-memory graph is retained and internally consistent. Hardware execution remains disabled.")
                         : "Cold boot preparation failed: \(result.sessionDescription), I/O \(result.ioStatusDescription)."
                 }
             } catch {
@@ -913,6 +935,11 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
                 "sec2_booter_vram_offset": describeHex(result.sec2BooterOffset),
                 "planned_boot_phases": result.bootPhaseCount,
                 "sequence_supported_by_current_core": result.executableWithCurrentCore,
+                "live_boundary_status": result.boundaryDescription,
+                "layout_rebuilt_for_live_boundary": result.boundaryRebuilt,
+                "active_mmu_lock": result.activeMmuLock,
+                "prototype_boundary": describeHex(result.prototypeBoundary),
+                "effective_boundary": describeHex(result.effectiveBoundary),
             ] as [String: Any]
         }
 
@@ -1152,12 +1179,17 @@ private struct RTXMacContentView: View {
                                 GridRow { Text("SEC2 VRAM offset"); Text(describeHex(result.sec2BooterOffset)) }
                                 GridRow { Text("Planned phases"); Text("\(result.bootPhaseCount)") }
                                 GridRow { Text("Core sequence complete"); Text(result.executableWithCurrentCore ? "YES" : "NO") }
+                                GridRow { Text("Live boundary input"); Text(result.boundaryDescription) }
+                                GridRow { Text("Layout rebuilt"); Text(result.boundaryRebuilt ? "YES" : "NO") }
+                                GridRow { Text("Active MMU lock"); Text(result.activeMmuLock ? "YES" : "NO") }
+                                GridRow { Text("Prototype boundary"); Text(describeHex(result.prototypeBoundary)) }
+                                GridRow { Text("Effective boundary"); Text(describeHex(result.effectiveBoundary)) }
                             }
                             .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)
                         }
 
-                        Text("This allocates and fills queue, arguments, metadata, Radix3, and log buffers. Ready means internally consistent—not armed. It performs no PCI command change, MMIO/PRAMIN write, reset, Falcon execution, or GSP start.")
+                        Text("This first reads the allow-listed MMU boundary, then allocates and fills queue, arguments, metadata, Radix3, and log buffers around the effective live layout. Ready means internally consistent—not armed. It performs no PCI command change, MMIO/PRAMIN write, reset, Falcon execution, or GSP start.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

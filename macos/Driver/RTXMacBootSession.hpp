@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RTXMacDma.hpp"
+#include "RTXMacLivePreflight.hpp"
 #include "RTXMacPackageStaging.hpp"
 #include "rtxmac/ga10x_boot_prepare.hpp"
 #include "rtxmac/ga10x_boot_resolve.hpp"
@@ -33,6 +34,7 @@ enum class RTXMacBootSessionStatus : std::uint32_t {
   ArtifactBuildFailed,
   ArtifactPopulationFailed,
   SequenceRejected,
+  BoundaryRejected,
 };
 
 struct RTXMacGeneratedDmaBuffer {
@@ -65,6 +67,12 @@ struct RTXMacColdBootSession {
   rtxmac::nvidia::gsp::ResolvedAddresses addresses{};
   std::uint32_t bootPhaseCount{};
   bool executableWithCurrentCore{};
+  rtxmac::nvidia::prototype::ReservedBoundaryStatus boundaryStatus{
+      rtxmac::nvidia::prototype::ReservedBoundaryStatus::InvalidProfile};
+  bool boundaryRebuilt{};
+  bool activeMmuLock{};
+  std::uint64_t prototypeBoundary{};
+  std::uint64_t effectiveBoundary{};
   std::array<RTXMacGeneratedDmaBuffer,
              rtxmac::nvidia::prototype::kGeneratedDmaRequirementCount>
       generated{};
@@ -78,6 +86,7 @@ struct RTXMacColdBootSession {
     std::span<const std::uint8_t> bytes,
     const rtxmac::nvidia::package::PackageView& view,
     const RTXMacStagedPackage& staged,
+    const RTXMacLiveBoundaryPreflight& liveBoundary,
     RTXMacColdBootSession* out) noexcept;
 
 void RTXMacReleaseColdBootSession(RTXMacColdBootSession* session) noexcept;

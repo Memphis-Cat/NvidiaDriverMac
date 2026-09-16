@@ -66,6 +66,22 @@ int main() {
   assert(profile.sec2Booter.firstApp.offset == 0x1000u);
   assert(profile.sec2Booter.load.osDataOffset == 0x4000u);
 
+  const auto liveBoundaryProfile =
+      BuildGa10xPrototypeProfile(package, 0x1FF000000ull);
+  assert(liveBoundaryProfile.status == ProfileStatus::Ok);
+  assert(!liveBoundaryProfile.assumesNoLowerVbiosMmuLock);
+  assert(liveBoundaryProfile.manifestInputs.vgaWorkspaceOffset ==
+         0x1FFF00000ull);
+  assert(liveBoundaryProfile.manifestInputs.vbiosReservedOffset ==
+         0x1FF000000ull);
+  assert(liveBoundaryProfile.manifest.wpr.gspFwWprEnd == 0x1FF000000ull);
+  assert(liveBoundaryProfile.manifest.wpr.frtsOffset == 0x1FEF00000ull);
+
+  assert(BuildGa10xPrototypeProfile(package, 0x1FFF01000ull).status ==
+         ProfileStatus::InvalidReservedBoundary);
+  assert(BuildGa10xPrototypeProfile(package, 0x1FF000001ull).status ==
+         ProfileStatus::InvalidReservedBoundary);
+
   auto unsupported = package;
   unsupported.metadata.pci.device = 0x2504u;
   assert(BuildGa10xPrototypeProfile(unsupported).status ==

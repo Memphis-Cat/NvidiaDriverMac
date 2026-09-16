@@ -21,6 +21,16 @@ bool FitsU32(std::uint64_t value) noexcept {
 
 Profile BuildGa10xPrototypeProfile(
     const package::PackageView& packageView) noexcept {
+  const std::uint64_t defaultBoundary =
+      packageView.metadata.vramBytes > kVgaWorkspaceBytes
+          ? packageView.metadata.vramBytes - kVgaWorkspaceBytes
+          : 0u;
+  return BuildGa10xPrototypeProfile(packageView, defaultBoundary);
+}
+
+Profile BuildGa10xPrototypeProfile(
+    const package::PackageView& packageView,
+    std::uint64_t vbiosReservedOffset) noexcept {
   Profile out{};
   if (packageView.status != package::ParseStatus::Ok) {
     out.status = ProfileStatus::PackageNotVerified;
@@ -35,6 +45,13 @@ Profile BuildGa10xPrototypeProfile(
   if (fbSize <= kVgaWorkspaceBytes + kFrtsBytes + kRequestedWprHeapBytes +
                     kNonWprHeapBytes + 0x400000ull) {
     out.status = ProfileStatus::InvalidVram;
+    return out;
+  }
+  const std::uint64_t vgaWorkspaceOffset = fbSize - kVgaWorkspaceBytes;
+  if (vbiosReservedOffset == 0u ||
+      vbiosReservedOffset > vgaWorkspaceOffset ||
+      (vbiosReservedOffset % 0x1000ull) != 0u) {
+    out.status = ProfileStatus::InvalidReservedBoundary;
     return out;
   }
 
@@ -66,8 +83,8 @@ Profile BuildGa10xPrototypeProfile(
 
   out.manifestInputs = {
       .fbSize = fbSize,
-      .vgaWorkspaceOffset = fbSize - kVgaWorkspaceBytes,
-      .vbiosReservedOffset = fbSize - kVgaWorkspaceBytes,
+      .vgaWorkspaceOffset = vgaWorkspaceOffset,
+      .vbiosReservedOffset = vbiosReservedOffset,
       .wprEndMargin = kWprEndMarginBytes,
       .frtsSize = kFrtsBytes,
       .nonWprHeapSize = kNonWprHeapBytes,
@@ -78,6 +95,8 @@ Profile BuildGa10xPrototypeProfile(
       .frtsFwsecImageBytes = fwsecImage,
       .sec2BooterImageBytes = sec2Image,
   };
+  out.assumesNoLowerVbiosMmuLock =
+      vbiosReservedOffset == vgaWorkspaceOffset;
   out.manifest = gsp::PlanBootManifest(out.manifestInputs);
   if (!out.manifest.valid) {
     out.status = ProfileStatus::ManifestRejected;
@@ -121,6 +140,8 @@ const char* ProfileStatusName(ProfileStatus status) noexcept {
     case ProfileStatus::SectionTooLarge: return "section-too-large";
     case ProfileStatus::InvalidMetadata: return "invalid-metadata";
     case ProfileStatus::ManifestRejected: return "manifest-rejected";
+    case ProfileStatus::InvalidReservedBoundary:
+      return "invalid-reserved-boundary";
   }
   return "unknown";
 }

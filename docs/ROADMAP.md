@@ -45,7 +45,7 @@ Most mechanisms exist but are intentionally not wired to a user-client selector:
 - [x] GSP/SEC2 Falcon plans and static register masks
 - [x] Phase executor, time bounds, and phase-level recovery policy
 - [x] Conservative PCI reset/recovery and post-reset checks
-- [ ] Bind the live boundary result to the final boot manifest
+- [x] Bind the live boundary result to the final boot manifest and rebuild lower layouts
 - [x] Build the generated DriverKit DMA allocations and resolved artifacts as one retained session
 - [ ] Add an explicit experimental arming contract that cannot be enabled accidentally
 - [ ] Connect only the audited cold sequence, with failure capture and controlled recovery

@@ -18,7 +18,7 @@ The core includes read-only MMIO abstractions, package validation, DMA-layout va
 
 A PCIDriverKit system extension owns the target NVIDIA PCI function and provides the hardware implementation of the portable transport. Its attach path is deliberately read-only. The user client currently exposes package validation, cold SYSRAM staging, retained construction of all generated GSP boot artifacts, PCI/GSP system information, and a read-only MMU reserved-boundary check.
 
-The retained cold session owns ten generated DMA allocations: queue backing, cached arguments, LIBOS init arguments, WPR metadata, a Radix3 firmware allocation, and five log regions. It resolves these together with the staged package signature and bootloader, then fills the complete host-memory graph. The session is SHA-256-bound to the exact staged package and is released when its user-client connection closes. This state is prepared but never armed or submitted.
+The retained cold session first captures the allow-listed live MMU lock. If it lowers the offline reserved boundary, the portable profile and WPR/VRAM placements are rebuilt around that effective boundary before artifacts are serialized. The session then owns ten generated DMA allocations: queue backing, cached arguments, LIBOS init arguments, WPR metadata, a Radix3 firmware allocation, and five log regions. It resolves these together with the staged package signature and bootloader, then fills the complete host-memory graph. The session is SHA-256-bound to the exact staged package and is released when its user-client connection closes. This state is prepared but never armed or submitted.
 
 ### 4. Ampere bring-up runtime
 

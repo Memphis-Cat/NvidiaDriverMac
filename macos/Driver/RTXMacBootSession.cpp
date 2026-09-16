@@ -55,6 +55,7 @@ kern_return_t RTXMacPrepareColdBootSession(
     std::span<const std::uint8_t> bytes,
     const rtxmac::nvidia::package::PackageView& view,
     const RTXMacStagedPackage& staged,
+    const RTXMacLiveBoundaryPreflight& liveBoundary,
     RTXMacColdBootSession* out) noexcept {
   using namespace rtxmac::nvidia;
 
@@ -78,8 +79,35 @@ kern_return_t RTXMacPrepareColdBootSession(
                 kIOReturnBadArgument);
   }
 
+  out->boundaryStatus = liveBoundary.decision.status;
+  out->activeMmuLock = liveBoundary.decision.activeMmuLock;
+  out->prototypeBoundary = liveBoundary.decision.prototypeBoundary;
+  out->effectiveBoundary = liveBoundary.decision.effectiveBoundary;
+  const std::uint64_t expectedPrototypeBoundary =
+      view.metadata.vramBytes > prototype::kVgaWorkspaceBytes
+          ? view.metadata.vramBytes - prototype::kVgaWorkspaceBytes
+          : 0u;
+  const bool boundaryDecisionUsable =
+      liveBoundary.captured && liveBoundary.ioStatus == kIOReturnSuccess &&
+      (liveBoundary.decision.status ==
+           prototype::ReservedBoundaryStatus::Ok ||
+       liveBoundary.decision.status ==
+           prototype::ReservedBoundaryStatus::RebuildRequired) &&
+      liveBoundary.decision.prototypeBoundary == expectedPrototypeBoundary &&
+      liveBoundary.decision.effectiveBoundary != 0u &&
+      liveBoundary.decision.effectiveBoundary <= expectedPrototypeBoundary;
+  if (!boundaryDecisionUsable) {
+    return Fail(out, RTXMacBootSessionStatus::BoundaryRejected,
+                liveBoundary.ioStatus == kIOReturnSuccess
+                    ? kIOReturnBadArgument
+                    : liveBoundary.ioStatus);
+  }
+  out->boundaryRebuilt =
+      liveBoundary.decision.effectiveBoundary != expectedPrototypeBoundary;
+
   const prototype::Profile profile =
-      prototype::BuildGa10xPrototypeProfile(view);
+      prototype::BuildGa10xPrototypeProfile(
+          view, liveBoundary.decision.effectiveBoundary);
   out->profileStatus = profile.status;
   if (profile.status != prototype::ProfileStatus::Ok) {
     return Fail(out, RTXMacBootSessionStatus::ProfileRejected,
@@ -290,6 +318,8 @@ const char* RTXMacBootSessionStatusName(
       return "artifact-population-failed";
     case RTXMacBootSessionStatus::SequenceRejected:
       return "sequence-rejected";
+    case RTXMacBootSessionStatus::BoundaryRejected:
+      return "boundary-rejected";
   }
   return "unknown";
 }
