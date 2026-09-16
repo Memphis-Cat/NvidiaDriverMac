@@ -14,6 +14,9 @@ BootPreflightReport CheckBootCommitPreflight(
   };
 
   if (!p.executionGateEnabled) return fail(BootPreflightFailure::ExecutionGateDisabled);
+  if (!p.armingContractAccepted) {
+    return fail(BootPreflightFailure::ArmingContractRejected);
+  }
   if (!p.pciMemorySpaceEnabled || !p.pciBusMasterEnabled) {
     return fail(BootPreflightFailure::PciCommandNotReady);
   }

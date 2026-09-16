@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(NvidiaDriverMac VERSION 0.0.21 LANGUAGES CXX)
+project(NvidiaDriverMac VERSION 0.0.22 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +30,7 @@ add_library(rtxmac_core STATIC
     src/core/gsp_manifest.cpp
     src/core/framebuffer_stage.cpp
     src/core/boot_recovery.cpp
+    src/core/boot_arm.cpp
     src/core/boot_preflight.cpp
     src/core/boot_sequence_policy.cpp
     src/core/boot_orchestrator.cpp
@@ -157,6 +158,10 @@ if(BUILD_TESTING)
   add_executable(rtxmac-boot-recovery-tests tests/test_boot_recovery.cpp)
   target_link_libraries(rtxmac-boot-recovery-tests PRIVATE rtxmac_core)
   add_test(NAME rtxmac-gsp-boot-recovery COMMAND rtxmac-boot-recovery-tests)
+
+  add_executable(rtxmac-boot-arm-tests tests/test_boot_arm.cpp)
+  target_link_libraries(rtxmac-boot-arm-tests PRIVATE rtxmac_core)
+  add_test(NAME rtxmac-explicit-boot-arm-contract COMMAND rtxmac-boot-arm-tests)
 
   add_executable(rtxmac-boot-preflight-tests tests/test_boot_preflight.cpp)
   target_link_libraries(rtxmac-boot-preflight-tests PRIVATE rtxmac_core)

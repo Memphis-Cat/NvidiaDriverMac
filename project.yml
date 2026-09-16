@@ -28,6 +28,7 @@ targets:
       - path: src/core/falcon_policy.cpp
       - path: src/core/boot_preflight.cpp
       - path: src/core/boot_recovery.cpp
+      - path: src/core/boot_arm.cpp
       - path: src/core/boot_sequence_policy.cpp
       - path: src/core/boot_orchestrator.cpp
       - path: src/core/boot_package.cpp

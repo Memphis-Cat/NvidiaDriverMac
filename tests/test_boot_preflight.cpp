@@ -8,6 +8,7 @@ int main() {
 
   BootCommitPrerequisites ready{
       .executionGateEnabled = true,
+      .armingContractAccepted = true,
       .pciMemorySpaceEnabled = true,
       .pciBusMasterEnabled = true,
       .sysmemFlushPageProgrammed = true,
@@ -29,6 +30,11 @@ int main() {
   gateOff.executionGateEnabled = false;
   assert(CheckBootCommitPreflight(gateOff).firstFailure ==
          BootPreflightFailure::ExecutionGateDisabled);
+
+  auto notArmed = ready;
+  notArmed.armingContractAccepted = false;
+  assert(CheckBootCommitPreflight(notArmed).firstFailure ==
+         BootPreflightFailure::ArmingContractRejected);
 
   auto noBusMaster = ready;
   noBusMaster.pciBusMasterEnabled = false;

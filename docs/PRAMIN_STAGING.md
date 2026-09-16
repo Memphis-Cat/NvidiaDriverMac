@@ -70,6 +70,6 @@ The original pre-write checklist is now implemented as follows:
 5. staging-image length/padding validation — implemented with deterministic zero padding;
 6. dry-run trace of every selector/aperture transition — implemented in the portable core.
 
-These pieces being present does **not** mean hardware execution is enabled or ready for a user boot test. The higher-level code now has parsed FRTS/SEC2 binding, PCI-command validation, an exact Falcon/GSP phase policy, bounded checks, and recovery classification. The remaining boundary is intentional integration: live MMU-lock evidence must be bound into the final manifest, generated DriverKit allocations must become one retained boot session, and an explicit experimental arming contract must gate the complete sequence. No user-client method currently enables PRAMIN execution.
+These pieces being present does **not** mean hardware execution is enabled or ready for a user boot test. The higher-level code now has parsed FRTS/SEC2 binding, PCI-command validation, an exact Falcon/GSP phase policy, bounded checks, recovery classification, a live-bound retained boot session, and an explicit challenge-response arming contract. The remaining boundary is intentional write-path integration and audited recovery capture. No user-client method currently enables PRAMIN execution.
 
 Do not infer GH100/Blackwell behavior from the GA102 constants. Newer Nouveau code uses a different BAR0-window register on GH100-class hardware.

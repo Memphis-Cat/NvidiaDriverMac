@@ -44,6 +44,14 @@ Future work and currently the largest unknown: modesetting/scanout, framebuffer 
 - Captures and parsers should be testable offline before they are used on hardware.
 - Prefer one information-rich macOS test over many small reboot/test cycles.
 
+Before any future hardware commit, a portable arming contract requires an
+exact package/staged digest match, exact live/package PCI identity, the bound
+live boundary, a ready address graph, the audited 12-phase sequence, recovery
+policy, a non-zero per-attempt nonce, a domain-separated SHA-256 response, a
+separate explicit write request, and a fixed acknowledgement value. This is
+deliberate accident prevention, not authentication. It is not exposed by the
+current read-only user client.
+
 ## First macOS prototype
 
 The first prototype is deliberately boring: attach to the exact GPU, validate the package, collect PCI/GSP system information, construct the complete cold host-memory graph, and read the allow-listed MMU-lock page. It must produce one self-contained diagnostic bundle for analysis back on Windows and must not reset or start the GPU.

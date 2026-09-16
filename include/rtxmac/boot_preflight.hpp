@@ -7,6 +7,7 @@ namespace rtxmac::nvidia::gsp {
 enum class BootPreflightFailure : std::uint8_t {
   None = 0,
   ExecutionGateDisabled,
+  ArmingContractRejected,
   PciCommandNotReady,
   SysmemFlushPageNotReady,
   SystemDmaNotReady,
@@ -23,6 +24,7 @@ struct BootCommitPrerequisites {
   // caller. Planning/testing can populate every other field without crossing
   // the first Falcon-reset commit boundary.
   bool executionGateEnabled{};
+  bool armingContractAccepted{};
   bool pciMemorySpaceEnabled{};
   bool pciBusMasterEnabled{};
   bool sysmemFlushPageProgrammed{};

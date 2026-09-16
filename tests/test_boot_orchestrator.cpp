@@ -77,6 +77,7 @@ Fixture MakeFixture() {
 
   BootCommitPrerequisites preflight{
       .executionGateEnabled = true,
+      .armingContractAccepted = true,
       .pciMemorySpaceEnabled = true,
       .pciBusMasterEnabled = true,
       .sysmemFlushPageProgrammed = true,

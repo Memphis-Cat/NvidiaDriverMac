@@ -13,7 +13,7 @@ The roadmap is organized around **hardware-test gates**. Work stays on Windows, 
 - [x] Transactional PRAMIN backup/write/readback/restore helpers
 - [x] PCI Memory Space/Bus Master transition with intent validation and rollback
 - [x] macOS 26 Intel DriverKit extension and Swift/IOKit host compile in GitHub CI
-- [x] Forty portable test executables run with assertions enabled
+- [x] Forty-one portable test executables run with assertions enabled
 
 The DEXT attach path remains read-only. Every write-capable helper is disconnected from the host interface and defaults to denied.
 
@@ -47,7 +47,7 @@ Most mechanisms exist but are intentionally not wired to a user-client selector:
 - [x] Conservative PCI reset/recovery and post-reset checks
 - [x] Bind the live boundary result to the final boot manifest and rebuild lower layouts
 - [x] Build the generated DriverKit DMA allocations and resolved artifacts as one retained session
-- [ ] Add an explicit experimental arming contract that cannot be enabled accidentally
+- [x] Add an explicit package/GPU/session-bound experimental arming contract
 - [ ] Connect only the audited cold sequence, with failure capture and controlled recovery
 - [ ] Establish GSP-RM host RPC on the RTX 3060 Ti
 
