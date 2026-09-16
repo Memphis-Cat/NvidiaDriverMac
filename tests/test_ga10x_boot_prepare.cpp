@@ -69,7 +69,11 @@ int main() {
 
   assert(plan.generated[4].kind == GeneratedBufferKind::Radix3Firmware);
   assert(plan.generated[4].layout == GeneratedDmaLayout::PageList);
-  assert(plan.generated[4].allocationBytes == profile.manifest.radix3.allocationBytes);
+  assert(plan.generated[4].logicalBytes ==
+         profile.manifest.radix3.allocationBytes);
+  assert(plan.generated[4].allocationBytes ==
+         profile.manifest.radix3.allocationPages * kBootPreparePageBytes);
+  assert(plan.generated[4].allocationBytes >= plan.generated[4].logicalBytes);
   assert(plan.generated[4].allocationBytes > profile.manifest.inputs.gspFirmwareImageBytes);
 
   for (std::size_t i = 5u; i < plan.generated.size(); ++i) {

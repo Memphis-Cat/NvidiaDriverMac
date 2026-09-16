@@ -13,6 +13,7 @@ DmaPlan PlanConservativeDmaChunks(std::uint64_t totalBytes,
       .totalBytes = totalBytes,
       .pageSize = pageSize,
       .segmentLimit = segmentLimit,
+      .chunks = {},
   };
 
   if (pageSize == 0 || segmentLimit == 0) {

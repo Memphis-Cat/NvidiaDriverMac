@@ -1,79 +1,78 @@
 # Roadmap
 
-The roadmap is organized around **hardware-test gates**. We keep working offline until a gate can answer a question that cannot be answered from Windows/source inspection.
+The roadmap is organized around **hardware-test gates**. Work stays on Windows, portable C++ tests, and macOS 26 Intel CI until the real RTX 3060 Ti can answer something source inspection cannot.
 
-## Phase 0 — offline foundation (current)
+## Gate A — offline and CI foundation (complete)
 
-- [x] Repository initialized
-- [x] Portable C++ core
-- [x] Windows PCI hardware-ID parser
-- [x] Windows hardware capture script
-- [x] Windows exact-target generator
-- [x] Versioned read-only ABI draft
-- [x] Ampere `NV_PMC_BOOT_42` offline decoder
-- [x] Portable PCI + NVIDIA identity tests
-- [x] DriverKit transport skeleton
-- [x] First-prototype diagnostic bundle script
-- [ ] Confirm the exact PCI hardware ID/subsystem ID of the target RTX 3060 Ti from Windows
-- [ ] macOS 26 Intel compile validation of the DEXT
-- [ ] Audit the signed/local-development DriverKit activation path for the test machine
+- [x] Portable C++20 core and Windows tooling
+- [x] RTXMACP1 package serializer/parser, SHA-256 verification, and tamper rejection
+- [x] GSP/FWSEC/SEC2/VBIOS parsing and GA10x semantic validation
+- [x] GSP queues, Radix3 page trees, WPR/libOS metadata, RPC bootstrap, and boot manifest
+- [x] Static GA102 MMIO policy, exact phase order, bounded polling, and recovery classification
+- [x] DriverKit DMA chunking, page validation, cold package staging, and persistent staged state
+- [x] Transactional PRAMIN backup/write/readback/restore helpers
+- [x] PCI Memory Space/Bus Master transition with intent validation and rollback
+- [x] macOS 26 Intel DriverKit extension and Swift/IOKit host compile in GitHub CI
+- [x] Forty portable test executables run with assertions enabled
 
-**No macOS hardware test during this phase.**
+The DEXT attach path remains read-only. Every write-capable helper is disconnected from the host interface and defaults to denied.
 
-## Phase 1 — first macOS read-only probe
+## Gate B — consolidated read-only macOS probe (implementation ready; hardware not run)
 
-One boot/test session should answer all of these at once:
+The host app can collect these results in one macOS session:
 
-- Does DriverKit attach to the exact NVIDIA PCI function?
-- What PCI command/status/config values does Tahoe expose?
-- Which BARs are available and what are their sizes/types?
-- Can BAR0 be mapped safely?
-- Can `NV_PMC_BOOT_0` and `NV_PMC_BOOT_42` be read consistently?
-- Does the decoded architecture/implementation match the expected Ampere chip?
-- What does the active VT-d/DMAR/IOMMU environment look like?
+- [x] Activate/open the DriverKit service
+- [x] Validate a `.rtxpkg` and match its PCI identity to the attached GPU
+- [x] Read PCI identity, revision, BDF, BAR metadata, and GSP system-info inputs
+- [x] Allocate/populate/prepare the five verified package DMA buffers without GPU execution
+- [x] Map one allow-listed BAR0 page read-only and capture the GA10x MMU lock
+- [x] Compare the live MMU lock against the offline VRAM reserved boundary
+- [x] Show `ok`, unreadable/unavailable, or `rebuild-required` without changing hardware state
+- [x] Export host results as versioned JSON and merge them with system logs into one diagnostic ZIP
+- [ ] Finish the signed/local-development activation and recovery instructions for the exact test machine
+- [ ] Confirm the target board's exact Windows subsystem identity and build the final test package
 
-The probe must emit a single diagnostic bundle that can be copied back to Windows.
+Do not spend a Hackintosh reboot on this gate until the remaining offline items are finished or hardware data becomes the blocker.
 
-## Phase 2 — DMA/GSP transport
+## Gate C — deliberately armed cold bring-up
 
-- Allocate DMA memory through DriverKit
-- Record physical/I/O virtual segments
-- Validate GPU-visible DMA addressing
-- Bring SEC2/GSP boot far enough to establish host RPC
-- Solve or route around Intel macOS IOMMU/AppleVTD issues
+Most mechanisms exist but are intentionally not wired to a user-client selector:
 
-Hardware writes begin here and must be narrowly scoped.
+- [x] Cold boot memory/address preparation
+- [x] Framebuffer scratch placement and deterministic padding
+- [x] GSP/SEC2 Falcon plans and static register masks
+- [x] Phase executor, time bounds, and phase-level recovery policy
+- [x] Conservative PCI reset/recovery and post-reset checks
+- [ ] Bind the live boundary result to the final boot manifest
+- [ ] Build the generated DriverKit DMA allocations and resolved artifacts as one retained session
+- [ ] Add an explicit experimental arming contract that cannot be enabled accidentally
+- [ ] Connect only the audited cold sequence, with failure capture and controlled recovery
+- [ ] Establish GSP-RM host RPC on the RTX 3060 Ti
 
-## Phase 3 — compute proof
+Hardware writes begin only at this gate. There will be no generic userspace MMIO-write API.
+
+## Gate D — compute proof
 
 - GPU virtual memory/page tables
 - GSP-RM RPC lifecycle
-- Command queues
-- Submit one deterministic compute workload
-- Verify result on CPU
+- command queues
+- one deterministic GPU workload with CPU-verified output
 
-Success criterion: the RTX 3060 Ti demonstrably executes a GPU workload under macOS.
+Success means the RTX 3060 Ti demonstrably executes a GPU workload under macOS.
 
-## Phase 4 — off-screen graphics
+## Gate E — off-screen graphics
 
-- Integrate/adapt NVK/NAK concepts
-- Create buffers/images
-- Compile shaders
-- Render a deterministic triangle/image off-screen
-- Read it back and compare against a reference image/hash
+- Adapt the relevant NVK/NAK concepts
+- create buffers/images and compile shaders
+- render a deterministic off-screen result
+- read back and compare against a reference image/hash
 
-## Phase 5 — display scanout
+## Gate F — display and macOS graphics integration
 
-- Display engine discovery
-- EDID
-- modesetting
-- DisplayPort/HDMI scanout
+- Display engine discovery, EDID, modesetting, and DP/HDMI scanout
 - stable framebuffer output
+- research WindowServer/IOAccelerator integration and feasible Metal-facing acceleration
 
-## Phase 6 — macOS graphics integration
+## Gate G — stability
 
-Research and implement the interface required for WindowServer/IOAccelerator and, if feasible, Metal-facing acceleration.
-
-## Phase 7 — stability
-
-Power management, reset/recovery, sleep/wake, multi-monitor, application compatibility, error handling and installation/upgrade behavior.
+Power management, reset/recovery, sleep/wake, multi-monitor, application compatibility, error handling, and installation/upgrade behavior.

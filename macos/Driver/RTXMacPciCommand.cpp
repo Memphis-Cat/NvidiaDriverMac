@@ -8,16 +8,7 @@ std::uint16_t ReadCommand(IOPCIDevice* pci) noexcept {
 }
 
 bool PlanShapeValid(const rtxmac::PciCommandTransition& plan) noexcept {
-  using namespace rtxmac;
-  if (plan.status != PciCommandPlanStatus::Ok &&
-      plan.status != PciCommandPlanStatus::NoChange) return false;
-  if (plan.rollbackValue != plan.oldValue) return false;
-  if ((plan.changedMask & ~kPciDmaWritableMask) != 0u) return false;
-  if (static_cast<std::uint16_t>(plan.oldValue ^ plan.newValue) != plan.changedMask) return false;
-  if ((plan.newValue & ~kPciDmaWritableMask) !=
-      (plan.oldValue & ~kPciDmaWritableMask)) return false;
-  if ((plan.oldValue & kPciDmaWritableMask & ~plan.newValue) != 0u) return false;
-  return true;
+  return rtxmac::ValidatePciCommandTransition(plan, plan.oldValue);
 }
 } // namespace
 

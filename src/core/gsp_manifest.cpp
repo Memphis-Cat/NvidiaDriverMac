@@ -108,7 +108,8 @@ std::optional<ResolvedDmaAllocation> ResolveSystemDmaAllocation(
 BootManifest PlanBootManifest(const ManifestInputs& in){
   BootManifest o{};o.inputs=in;if(!in.gspFirmwareImageBytes||!in.gspSignatureBytes||!in.gspBootloaderBytes||!in.frtsFwsecImageBytes||!in.sec2BooterImageBytes)return o;
   auto q=PlanQueueMemory(in.queueBytes);auto r=PlanRadix3(in.gspFirmwareImageBytes);auto w=PlanWprLayout({in.fbSize,in.vgaWorkspaceOffset,in.vbiosReservedOffset,in.wprEndMargin,in.frtsSize,in.gspBootloaderBytes,in.gspFirmwareImageBytes,in.nonWprHeapSize,in.requestedWprHeapSize});
-  if(!q||!r||!w)return o;o.queues=*q;o.radix3=*r;o.wpr=*w;o.valid=true;o.bootstrapRpcPrefillImplemented=true;
+  if(!q||!r||!w)return o;
+  o.queues=*q;o.radix3=*r;o.wpr=*w;o.valid=true;o.bootstrapRpcPrefillImplemented=true;
 
   AddAlloc(o,AllocationKind::QueueBacking,MemoryDomain::System,q->totalBytes,kPage,DmaLayoutRequirement::PageList);
   AddAlloc(o,AllocationKind::CachedArguments,MemoryDomain::System,kGspArgumentsCachedBytes,kPage,DmaLayoutRequirement::Linear);
@@ -180,11 +181,11 @@ BootSequence PlanBootSequence(
      g.bin.dataSize!=m.inputs.gspBootloaderBytes||s.bin.dataSize!=m.inputs.sec2BooterImageBytes||
      !f.imemLoadSize||!f.dmemLoadSize)return o;
   o.phases.push_back({BootPhase::PrefillBootstrapRpcRecords,{},{}});
-  PhasePlan p{BootPhase::ResetGspForFrts};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,false,chip));o.phases.push_back(std::move(p));
-  auto fx=falcon::PlanAuthenticatedExecution({falcon::Engine::Gsp,a.frtsFwsecImage,0u,f.imemLoadSize,f.imemPhysBase,f.imemVirtBase,f.imemLoadSize,f.dmemPhysBase,0u,f.dmemLoadSize,f.pkcDataOffset,f.engineIdMask,f.ucodeId,std::nullopt});if(!fx.valid)return {};p={BootPhase::ExecuteFrtsFwsec};AppendActions(p,fx);o.phases.push_back(std::move(p));
-  o.phases.push_back({BootPhase::VerifyWpr2,{},{{CheckKind::MmioNonZero,kWpr2Hi,0xFFFFFFFFu,0u}}});p={BootPhase::ResetGspForRiscv};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,true,chip));o.phases.push_back(std::move(p));
-  o.phases.push_back({BootPhase::ProgramLibosMailbox,{Write32(kGspMailbox0,static_cast<std::uint32_t>(a.libosInitArguments)),Write32(kGspMailbox1,static_cast<std::uint32_t>(a.libosInitArguments>>32u))},{}});p={BootPhase::ResetSec2};AppendActions(p,falcon::PlanReset(falcon::Engine::Sec2,false,chip));o.phases.push_back(std::move(p));
-  auto sx=falcon::PlanAuthenticatedExecution({falcon::Engine::Sec2,a.sec2BooterImage,s.firstApp.offset,s.load.osDataOffset,0u,s.firstApp.offset,s.firstApp.size,0u,0u,s.load.osDataSize,0x10u,1u,3u,a.wprMetadata});if(!sx.valid)return {};p={BootPhase::ExecuteSec2Booter};AppendActions(p,sx);o.phases.push_back(std::move(p));
+  PhasePlan p{BootPhase::ResetGspForFrts,{}, {}};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,false,chip));o.phases.push_back(std::move(p));
+  auto fx=falcon::PlanAuthenticatedExecution({falcon::Engine::Gsp,a.frtsFwsecImage,0u,f.imemLoadSize,f.imemPhysBase,f.imemVirtBase,f.imemLoadSize,f.dmemPhysBase,0u,f.dmemLoadSize,f.pkcDataOffset,f.engineIdMask,f.ucodeId,std::nullopt});if(!fx.valid)return {};p={BootPhase::ExecuteFrtsFwsec,{}, {}};AppendActions(p,fx);o.phases.push_back(std::move(p));
+  o.phases.push_back({BootPhase::VerifyWpr2,{},{{CheckKind::MmioNonZero,kWpr2Hi,0xFFFFFFFFu,0u}}});p={BootPhase::ResetGspForRiscv,{}, {}};AppendActions(p,falcon::PlanReset(falcon::Engine::Gsp,true,chip));o.phases.push_back(std::move(p));
+  o.phases.push_back({BootPhase::ProgramLibosMailbox,{Write32(kGspMailbox0,static_cast<std::uint32_t>(a.libosInitArguments)),Write32(kGspMailbox1,static_cast<std::uint32_t>(a.libosInitArguments>>32u))},{}});p={BootPhase::ResetSec2,{}, {}};AppendActions(p,falcon::PlanReset(falcon::Engine::Sec2,false,chip));o.phases.push_back(std::move(p));
+  auto sx=falcon::PlanAuthenticatedExecution({falcon::Engine::Sec2,a.sec2BooterImage,s.firstApp.offset,s.load.osDataOffset,0u,s.firstApp.offset,s.firstApp.size,0u,0u,s.load.osDataSize,0x10u,1u,3u,a.wprMetadata});if(!sx.valid)return {};p={BootPhase::ExecuteSec2Booter,{}, {}};AppendActions(p,sx);o.phases.push_back(std::move(p));
   o.phases.push_back({BootPhase::VerifySec2Booter,{},{{CheckKind::MmioMaskEqual,kSec2Mailbox0,0xFFFFFFFFu,0u}}});
   // NVIDIA programs FALCON_OS with RM_RISCV_UCODE_DESC::appVersion after SEC2
   // resumes GSP-RM; a hardcoded zero changes the boot contract.

@@ -20,6 +20,9 @@ struct PciCommandTransition {
   PciCommandPlanStatus status{PciCommandPlanStatus::InvalidRequestedMask};
   std::uint16_t oldValue{};
   std::uint16_t newValue{};
+  // Persist the caller's intent so validation can prove that an otherwise
+  // well-shaped transition was not weakened after it was planned.
+  std::uint16_t requestedSetMask{};
   std::uint16_t changedMask{};
   // Exact original value used by a transactional caller to restore state.
   std::uint16_t rollbackValue{};
@@ -34,6 +37,7 @@ struct PciCommandTransition {
   PciCommandTransition out{};
   out.oldValue = current;
   out.rollbackValue = current;
+  out.requestedSetMask = requestedSetMask;
   if ((requestedSetMask & ~kPciDmaWritableMask) != 0u) {
     out.status = PciCommandPlanStatus::InvalidRequestedMask;
     return out;
@@ -54,6 +58,9 @@ struct PciCommandTransition {
   if (plan.status != PciCommandPlanStatus::Ok &&
       plan.status != PciCommandPlanStatus::NoChange) return false;
   if (observedCurrent != plan.oldValue || plan.rollbackValue != plan.oldValue) return false;
+  if ((plan.requestedSetMask & ~kPciDmaWritableMask) != 0u) return false;
+  if (plan.newValue !=
+      static_cast<std::uint16_t>(plan.oldValue | plan.requestedSetMask)) return false;
   if ((plan.changedMask & ~kPciDmaWritableMask) != 0u) return false;
   if (static_cast<std::uint16_t>(plan.oldValue ^ plan.newValue) != plan.changedMask) return false;
   if ((plan.newValue & ~kPciDmaWritableMask) !=

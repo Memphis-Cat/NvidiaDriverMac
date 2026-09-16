@@ -13,9 +13,11 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -A x64
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Debug --parallel
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        # The portable tests intentionally use assert() for their contracts.
+        # A Release build defines NDEBUG and silently removes those checks.
+        run: ctest --test-dir build -C Debug --output-on-failure
 
   tahoe-driverkit:
     name: macOS 26 Intel DriverKit + host compile

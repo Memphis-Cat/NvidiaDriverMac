@@ -9,10 +9,29 @@ private let driverUserClass = "RTXMacDriver"
 private let maxPackageBytes = 128 * 1024 * 1024
 private let rtxPackageType = UTType(filenameExtension: "rtxpkg") ?? .data
 
+struct RTXMacDiagnosticDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+
+    var data: Data
+
+    init(data: Data = Data()) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
 private enum UserClientSelector {
     static let validatePackage: UInt32 = 0
     static let stagePackage: UInt32 = 2
     static let systemInfo: UInt32 = 4
+    static let liveBoundary: UInt32 = 5
 }
 
 struct DriverValidationResult: Sendable {
@@ -127,6 +146,35 @@ struct DriverSystemInfoResult: Sendable {
             format: "%04X:%04X subsystem %04X:%04X",
             vendor, device, subsystemVendor, subsystemDevice
         )
+    }
+}
+
+struct DriverBoundaryPreflightResult: Sendable {
+    let packageAccepted: Bool
+    let profileValid: Bool
+    let captured: Bool
+    let ioStatus: UInt64
+    let boundaryStatus: UInt64
+    let safeToProceed: Bool
+    let activeMmuLock: Bool
+    let prototypeBoundary: UInt64
+    let effectiveBoundary: UInt64
+    let mmuLockLow: UInt64
+    let mmuLockHigh: UInt64
+
+    var ioStatusDescription: String {
+        String(format: "0x%08X", UInt32(truncatingIfNeeded: ioStatus))
+    }
+
+    var boundaryDescription: String {
+        let names = [
+            "ok", "invalid-profile", "mmu-lock-unavailable",
+            "mmu-lock-unreadable", "rebuild-required"
+        ]
+        let index = Int(boundaryStatus)
+        return index >= 0 && index < names.count
+            ? names[index]
+            : "unknown(\(boundaryStatus))"
     }
 }
 
@@ -386,6 +434,30 @@ private func readSystemInfoWithDriver() throws -> DriverSystemInfoResult {
     )
 }
 
+private func checkLiveBoundaryWithDriver(
+    _ data: Data
+) throws -> DriverBoundaryPreflightResult {
+    let session = try RTXMacDriverSession.open()
+    let output = try session.callPackageMethod(
+        data,
+        selector: UserClientSelector.liveBoundary,
+        expectedOutputCount: 11
+    )
+    return DriverBoundaryPreflightResult(
+        packageAccepted: output[0] != 0,
+        profileValid: output[1] != 0,
+        captured: output[2] != 0,
+        ioStatus: output[3],
+        boundaryStatus: output[4],
+        safeToProceed: output[5] != 0,
+        activeMmuLock: output[6] != 0,
+        prototypeBoundary: output[7],
+        effectiveBoundary: output[8],
+        mmuLockLow: output[9],
+        mmuLockHigh: output[10]
+    )
+}
+
 @MainActor
 final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDelegate {
     @Published var status = "Driver not activated by this app yet."
@@ -400,6 +472,9 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
     @Published var staging = false
     @Published var stagingStatus = "Package is not staged."
     @Published var stagingResult: DriverStagingResult?
+    @Published var checkingBoundary = false
+    @Published var boundaryStatus = "Live MMU boundary has not been checked."
+    @Published var boundaryResult: DriverBoundaryPreflightResult?
 
     private var selectedPackageData: Data?
     private var stagedSession: RTXMacDriverSession?
@@ -449,6 +524,8 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
         stagedSession = nil
         stagingResult = nil
         stagingStatus = "Package is not staged."
+        boundaryResult = nil
+        boundaryStatus = "Live MMU boundary has not been checked."
 
         Task.detached(priority: .userInitiated) {
             do {
@@ -521,6 +598,40 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
         }
     }
 
+    func checkSelectedPackageBoundary() {
+        guard let data = selectedPackageData, validation?.accepted == true else {
+            boundaryStatus = "Validate an accepted .rtxpkg before checking the live boundary."
+            return
+        }
+
+        checkingBoundary = true
+        boundaryResult = nil
+        boundaryStatus = "Reading the GA10x MMU-lock registers and comparing the reserved boundary…"
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try checkLiveBoundaryWithDriver(data)
+                await MainActor.run {
+                    self.checkingBoundary = false
+                    self.boundaryResult = result
+                    if result.safeToProceed {
+                        self.boundaryStatus = "Read-only boundary preflight passed."
+                    } else if result.boundaryDescription == "rebuild-required" {
+                        self.boundaryStatus = "The live MMU lock lowers the reserved boundary. Rebuild the boot layout before any write is allowed."
+                    } else {
+                        self.boundaryStatus = "Read-only boundary preflight did not pass: \(result.boundaryDescription), I/O \(result.ioStatusDescription)."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.checkingBoundary = false
+                    self.boundaryResult = nil
+                    self.boundaryStatus = error.localizedDescription
+                }
+            }
+        }
+    }
+
     func packageImportFailed(_ error: Error) {
         packageStatus = "Package selection failed: \(error.localizedDescription)"
         validation = nil
@@ -529,6 +640,90 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
         stagedSession = nil
         stagingResult = nil
         stagingStatus = "Package is not staged."
+        boundaryResult = nil
+        boundaryStatus = "Live MMU boundary has not been checked."
+    }
+
+    func makeDiagnosticReportDocument() -> RTXMacDiagnosticDocument {
+        var report: [String: Any] = [
+            "schema": "rtxmac-read-only-diagnostics-v1",
+            "generated_at": ISO8601DateFormatter().string(from: Date()),
+            "safety_boundary": "No GPU reset, PCI command change, MMIO/PRAMIN write, DMA execution, Falcon execution, or GSP start was requested by this report.",
+            "extension_status": status,
+            "system_info_status": systemInfoStatus,
+            "package_name": packageName,
+            "package_status": packageStatus,
+            "staging_status": stagingStatus,
+            "boundary_status": boundaryStatus,
+        ]
+
+        if let info = systemInfo {
+            report["system_info"] = [
+                "available": info.available,
+                "io_status": info.ioStatusDescription,
+                "pci_bdf": info.bdfDescription,
+                "pci_identity": info.pciIdentityDescription,
+                "revision": String(format: "0x%02llX", info.revision),
+                "bar0_base": describeHex(info.bar0Base),
+                "bar0_size": info.bar0Size,
+                "bar1_base": describeHex(info.bar1Base),
+                "bar1_size": info.bar1Size,
+                "bar3_base": describeHex(info.bar3Base),
+                "bar3_size": info.bar3Size,
+                "max_user_va": describeHex(info.maxUserVa),
+                "pci_config_mirror_base": describeHex(info.pciConfigMirrorBase),
+                "pci_config_mirror_size": info.pciConfigMirrorSize,
+                "passthrough": info.passthrough,
+            ] as [String: Any]
+        }
+
+        if let result = validation {
+            report["package_validation"] = [
+                "accepted": result.accepted,
+                "parse_status": result.parseDescription,
+                "semantic_status": result.semanticDescription,
+                "package_bytes": result.packageBytes,
+                "live_pci_identity": describePCIIdentity(result.liveIdentity),
+                "package_pci_identity": describePCIIdentity(result.packageIdentity),
+                "driver_max_package_bytes": result.driverMaxPackageBytes,
+            ] as [String: Any]
+        }
+
+        if let result = stagingResult {
+            report["cold_sysram_staging"] = [
+                "ready": result.ready,
+                "stage_status": result.stageDescription,
+                "plan_status": result.planDescription,
+                "io_status": result.ioStatusDescription,
+                "failed_section": result.failedSectionDescription,
+                "logical_bytes": result.totalLogicalBytes,
+                "allocation_bytes": result.totalAllocationBytes,
+                "page_count": result.totalPages,
+                "first_dma_pages": result.firstDmaPages.map(describeDmaAddress),
+            ] as [String: Any]
+        }
+
+        if let result = boundaryResult {
+            report["mmu_reserved_boundary"] = [
+                "package_accepted": result.packageAccepted,
+                "profile_valid": result.profileValid,
+                "registers_captured": result.captured,
+                "io_status": result.ioStatusDescription,
+                "decision": result.boundaryDescription,
+                "safe_to_proceed": result.safeToProceed,
+                "active_mmu_lock": result.activeMmuLock,
+                "prototype_boundary": describeHex(result.prototypeBoundary),
+                "effective_boundary": describeHex(result.effectiveBoundary),
+                "mmu_lock_low": describeHex(result.mmuLockLow),
+                "mmu_lock_high": describeHex(result.mmuLockHigh),
+            ] as [String: Any]
+        }
+
+        let data = (try? JSONSerialization.data(
+            withJSONObject: report,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )) ?? Data("{}\n".utf8)
+        return RTXMacDiagnosticDocument(data: data)
     }
 
     nonisolated func request(
@@ -564,6 +759,8 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
 private struct RTXMacContentView: View {
     @ObservedObject var extensions: ExtensionManager
     @State private var importingPackage = false
+    @State private var exportingDiagnostics = false
+    @State private var diagnosticDocument = RTXMacDiagnosticDocument()
 
     var body: some View {
         ScrollView {
@@ -711,6 +908,58 @@ private struct RTXMacContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                GroupBox("Read-only MMU reserved-boundary preflight") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button(extensions.checkingBoundary ? "Checking boundary…" : "Check live MMU boundary") {
+                            extensions.checkSelectedPackageBoundary()
+                        }
+                        .disabled(
+                            !extensions.canStage || extensions.checkingBoundary ||
+                            extensions.validating || extensions.staging
+                        )
+
+                        Text(extensions.boundaryStatus)
+                            .textSelection(.enabled)
+
+                        if let result = extensions.boundaryResult {
+                            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                                GridRow { Text("Package accepted"); Text(result.packageAccepted ? "YES" : "NO") }
+                                GridRow { Text("Boundary profile"); Text(result.profileValid ? "VALID" : "INVALID") }
+                                GridRow { Text("Live registers captured"); Text(result.captured ? "YES" : "NO") }
+                                GridRow { Text("Driver I/O"); Text(result.ioStatusDescription) }
+                                GridRow { Text("Decision"); Text(result.boundaryDescription) }
+                                GridRow { Text("Safe for later write stage"); Text(result.safeToProceed ? "YES" : "NO") }
+                                GridRow { Text("Active MMU lock"); Text(result.activeMmuLock ? "YES" : "NO") }
+                                GridRow { Text("Prototype boundary"); Text(describeHex(result.prototypeBoundary)) }
+                                GridRow { Text("Effective boundary"); Text(describeHex(result.effectiveBoundary)) }
+                                GridRow { Text("MMU lock low"); Text(describeHex(result.mmuLockLow)) }
+                                GridRow { Text("MMU lock high"); Text(describeHex(result.mmuLockHigh)) }
+                            }
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                        }
+
+                        Text("This maps one BAR0 page for volatile 32-bit reads only. It performs no reset, MMIO write, PRAMIN write, PCI command change, DMA execution, Falcon execution, or GSP start.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                GroupBox("Diagnostic handoff") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button("Export read-only diagnostics JSON") {
+                            diagnosticDocument = extensions.makeDiagnosticReportDocument()
+                            exportingDiagnostics = true
+                        }
+
+                        Text("Save this JSON, then pass it to scripts/macos/collect-diagnostics.sh so the host results and macOS logs are captured in one ZIP for analysis from Windows.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 Text("Cold staging allocates and prepares host SYSRAM only. It does not reset the GPU, write BAR0/PRAMIN, change clocks or power, execute Falcon firmware, or start GSP-RM.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -732,6 +981,12 @@ private struct RTXMacContentView: View {
                 extensions.packageImportFailed(error)
             }
         }
+        .fileExporter(
+            isPresented: $exportingDiagnostics,
+            document: diagnosticDocument,
+            contentType: .json,
+            defaultFilename: "RTXMac-Diagnostics"
+        ) { _ in }
     }
 }
 

@@ -21,12 +21,6 @@ const AllocationRequirement* FindAllocation(
   return nullptr;
 }
 
-bool Add(std::uint64_t a, std::uint64_t b, std::uint64_t* out) noexcept {
-  if (!out || a > std::numeric_limits<std::uint64_t>::max() - b) return false;
-  *out = a + b;
-  return true;
-}
-
 std::uint64_t AlignUpPage(std::uint64_t value) noexcept {
   if (value == 0u || value > std::numeric_limits<std::uint64_t>::max() -
                                   (kBootPreparePageBytes - 1u)) {
